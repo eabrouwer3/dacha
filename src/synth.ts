@@ -98,13 +98,27 @@ export function collectFromTree(app: Machine): Resource[] {
 async function importConfig(configPath: string): Promise<Record<string, unknown>> {
   if (configPath.endsWith(".ts")) {
     const fileUrl = toFileUrl(configPath);
-    const result = await transpile(fileUrl);
+
+    // Look for a deno.json import map next to the config file
+    const configDir = join(configPath, "..");
+    const importMapPath = join(configDir, "deno.json");
+    let importMapUrl: URL | undefined;
+    try {
+      await Deno.stat(importMapPath);
+      importMapUrl = toFileUrl(importMapPath);
+    } catch {
+      // No import map found — proceed without one
+    }
+
+    const result = await transpile(fileUrl, {
+      importMap: importMapUrl?.href,
+    });
     const jsCode = result.get(fileUrl.href);
     if (!jsCode) {
       throw new Error(`transpile produced no output for ${configPath}`);
     }
-    // Write to a temp .mjs file and import that
-    const tmpFile = await Deno.makeTempFile({ suffix: ".mjs" });
+    // Write next to the original so relative imports still resolve
+    const tmpFile = configPath.replace(/\.ts$/, ".tmp.mjs");
     try {
       await Deno.writeTextFile(tmpFile, jsCode);
       return await import(toFileUrl(tmpFile).href);
