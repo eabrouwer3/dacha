@@ -12,6 +12,7 @@ import {
   installUpdateLaunchd,
   installUpdateSystemd,
 } from "./update/scheduler.ts";
+import { exec } from "./util/shell.ts";
 import { error, info, success, warn } from "./util/log.ts";
 
 /** Options accepted by the init command. */
@@ -88,6 +89,21 @@ async function installUpdate(dachaPath: string): Promise<void> {
  */
 export async function init(url: string, opts: InitOpts = {}): Promise<void> {
   const repoPath = opts.path ?? defaultRepoPath();
+
+  // Ensure Xcode CLT is installed on macOS (required for git)
+  if (Deno.build.os === "darwin") {
+    const check = await exec("xcode-select -p");
+    if (check.code !== 0) {
+      info("installing Xcode Command Line Tools (required for git)...");
+      await exec("xcode-select --install 2>/dev/null || true");
+      // xcode-select --install is async (opens a UI dialog), so wait for it
+      info("waiting for Xcode CLT installation to complete...");
+      while ((await exec("xcode-select -p")).code !== 0) {
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+      success("Xcode Command Line Tools installed");
+    }
+  }
 
   // Clone or pull
   if (await dirExists(repoPath)) {
