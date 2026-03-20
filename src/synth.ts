@@ -95,7 +95,7 @@ export function collectFromTree(app: Machine): Resource[] {
  * Import a config file, transpiling TypeScript to JavaScript first so that
  * compiled binaries (which can't dynamically import .ts) work correctly.
  */
-async function importConfig(configPath: string): Promise<Record<string, unknown>> {
+export async function importConfig(configPath: string): Promise<Record<string, unknown>> {
   if (configPath.endsWith(".ts")) {
     const fileUrl = toFileUrl(configPath);
 

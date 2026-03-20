@@ -3,7 +3,7 @@
 
 import { dirname, join } from "@std/path";
 import { gitClone, gitPull } from "./util/git.ts";
-import { synth } from "./synth.ts";
+import { importConfig, synth } from "./synth.ts";
 import { apply } from "./apply.ts";
 import { resetParams } from "./params.ts";
 import { installSyncLaunchd } from "./sync/launchd.ts";
@@ -145,7 +145,7 @@ export async function init(url: string, opts: InitOpts = {}): Promise<void> {
 
   // Read the DachaConfig to check sync/update settings.
   // Re-import the config to access sync/update flags.
-  const mod = await import(configPath);
+  const mod = await importConfig(configPath);
   const configFn = mod.default;
   const { detectPlatform, resolvePaths } = await import("./platform.ts");
   const platform = detectPlatform();
