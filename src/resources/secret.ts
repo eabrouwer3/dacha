@@ -1,16 +1,19 @@
-// Secret resource executor — decrypt age-encrypted files and place with permissions.
+// Secret resource — decrypt age-encrypted files and place with permissions.
 // Also provides encrypt() and edit() helpers for the CLI.
 
-import type {
-  OutputStore,
-  Platform,
-  ResourceExecutor,
-  ResourceResult,
-  SecretResource,
-} from "../types.ts";
+import { Resource } from "../resource.ts";
+import type { App } from "../app.ts";
+import type { OutputStore, Platform, ResourceResult } from "../types.ts";
 import { exec } from "../util/shell.ts";
 import { debug, info } from "../util/log.ts";
 import { dirname } from "@std/path";
+
+export interface SecretProps {
+  source: string;
+  destination: string;
+  permissions?: string;
+  dependsOn?: string[];
+}
 
 /** Resolve `~` prefix to the user's home directory. */
 function resolveHome(path: string): string {
@@ -29,27 +32,40 @@ function identityPath(): string {
   return `${home}/.config/age/identity.txt`;
 }
 
-export const SecretExecutor: ResourceExecutor<SecretResource> = {
-  async check(resource, _platform: Platform): Promise<boolean> {
-    const dest = resolveHome(resource.destination);
+export class Secret extends Resource {
+  static readonly resourceType = "secret";
+
+  readonly source: string;
+  readonly destination: string;
+  readonly permissions?: string;
+
+  constructor(scope: Resource | App, id: string, props: SecretProps) {
+    super(scope, id, props);
+    this.source = props.source;
+    this.destination = props.destination;
+    this.permissions = props.permissions;
+  }
+
+  async check(_platform: Platform): Promise<boolean> {
+    const dest = resolveHome(this.destination);
     try {
       await Deno.stat(dest);
-      debug(`secret check: ${resource.id} destination exists`);
+      debug(`secret check: ${this.id} destination exists`);
       return true;
     } catch {
-      debug(`secret check: ${resource.id} destination missing`);
+      debug(`secret check: ${this.id} destination missing`);
       return false;
     }
-  },
+  }
 
-  async apply(resource, _platform: Platform, _outputs: OutputStore): Promise<ResourceResult> {
-    const dest = resolveHome(resource.destination);
+  async apply(_platform: Platform, _outputs: OutputStore): Promise<ResourceResult> {
+    const dest = resolveHome(this.destination);
     const identity = identityPath();
-    const permissions = resource.permissions ?? "0600";
+    const permissions = this.permissions ?? "0600";
 
     // Decrypt the source file using age
-    const cmd = ["age", "-d", "-i", identity, resource.source];
-    info(`decrypting ${resource.source} → ${resource.destination}`);
+    const cmd = ["age", "-d", "-i", identity, this.source];
+    info(`decrypting ${this.source} → ${this.destination}`);
     const result = await exec(cmd);
 
     if (result.code !== 0) {
@@ -68,8 +84,18 @@ export const SecretExecutor: ResourceExecutor<SecretResource> = {
     await Deno.writeFile(dest, content, { mode: parseInt(permissions, 8) });
 
     return { status: "applied" };
-  },
-};
+  }
+
+  protected toProps() {
+    return {
+      id: this.id,
+      source: this.source,
+      destination: this.destination,
+      permissions: this.permissions,
+      dependsOn: this.dependsOn,
+    };
+  }
+}
 
 
 /** Encrypt a file using age with a recipients file. Writes to `<file>.age`. */

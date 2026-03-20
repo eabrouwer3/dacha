@@ -21,10 +21,10 @@ export interface InitOpts {
   yes?: boolean;
 }
 
-/** Resolve the default dotfiles path (~/.dotfiles). */
+/** Resolve the default dotfiles path (~/.dacha). */
 function defaultRepoPath(): string {
   const home = Deno.env.get("HOME") ?? "~";
-  return join(home, ".dotfiles");
+  return join(home, ".dacha");
 }
 
 /** Return the global config path (~/.config/dacha/config.json). */

@@ -1,7 +1,10 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import fc from "fast-check";
 import { buildGraph, findImplicitDeps } from "./graph.ts";
-import type { Resource } from "./types.ts";
+import type { ResourceDef } from "./types.ts";
+
+/** Alias for readability in tests. */
+type Resource = ResourceDef;
 
 // --- Independent resources (no deps) ---
 

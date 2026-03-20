@@ -3,7 +3,10 @@
 // detects cycles via DFS with coloring, and returns resources in execution order
 // using Kahn's algorithm.
 
-import type { Resource } from "./types.ts";
+import type { ResourceDef } from "./types.ts";
+
+/** A resource-like object used by the graph builder. */
+type Resource = ResourceDef;
 
 /** Regex to match {{output.resourceId.key}} patterns in strings. */
 const OUTPUT_REF_RE = /\{\{output\.([^.}]+)\.[^}]+\}\}/g;

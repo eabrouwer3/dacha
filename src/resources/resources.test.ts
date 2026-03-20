@@ -1,18 +1,19 @@
-import { assertEquals } from "@std/assert";
-import { resolvePackageName } from "./package.ts";
-import { interpolateTemplate } from "./dotfile.ts";
-import { CommandExecutor } from "./command.ts";
-import { SecretExecutor } from "./secret.ts";
-import type { CommandResource, OutputStore, PackageResource, Platform, SecretResource } from "../types.ts";
+import { assertEquals, assertRejects } from "@std/assert";
+import { App } from "../app.ts";
+import { Package, resolvePackageName } from "./package.ts";
+import { Dotfile, interpolateTemplate } from "./dotfile.ts";
+import { Command } from "./command.ts";
+import { Secret } from "./secret.ts";
+import type { OutputStore, Platform } from "../types.ts";
 
-// --- Helper: build a minimal PackageResource ---
-
-function pkg(overrides: Partial<PackageResource> = {}): PackageResource {
-  return { id: "pkg-test", type: "package", name: "testpkg", ...overrides };
-}
+// --- Helpers ---
 
 function platform(pm: Platform["packageManager"], os: Platform["os"] = "darwin"): Platform {
   return { os, arch: "arm64", packageManager: pm };
+}
+
+function pkg(overrides: { name: string; brew?: string; brewCask?: string; apt?: string; yum?: string } = { name: "testpkg" }) {
+  return overrides;
 }
 
 // ============================================================
@@ -24,20 +25,19 @@ Deno.test("resolvePackageName - brew falls back to canonical name", () => {
 });
 
 Deno.test("resolvePackageName - brew override used when set", () => {
-  assertEquals(resolvePackageName(pkg({ brew: "testpkg-brew" }), platform("brew")), "testpkg-brew");
+  assertEquals(resolvePackageName(pkg({ name: "testpkg", brew: "testpkg-brew" }), platform("brew")), "testpkg-brew");
 });
 
 Deno.test("resolvePackageName - brewCask takes priority over brew", () => {
-  const r = pkg({ brew: "testpkg-brew", brewCask: "testpkg-cask" });
-  assertEquals(resolvePackageName(r, platform("brew")), "testpkg-cask");
+  assertEquals(resolvePackageName(pkg({ name: "testpkg", brew: "testpkg-brew", brewCask: "testpkg-cask" }), platform("brew")), "testpkg-cask");
 });
 
 Deno.test("resolvePackageName - brewCask alone works", () => {
-  assertEquals(resolvePackageName(pkg({ brewCask: "my-cask" }), platform("brew")), "my-cask");
+  assertEquals(resolvePackageName(pkg({ name: "testpkg", brewCask: "my-cask" }), platform("brew")), "my-cask");
 });
 
 Deno.test("resolvePackageName - apt override used when set", () => {
-  assertEquals(resolvePackageName(pkg({ apt: "testpkg-apt" }), platform("apt", "linux")), "testpkg-apt");
+  assertEquals(resolvePackageName(pkg({ name: "testpkg", apt: "testpkg-apt" }), platform("apt", "linux")), "testpkg-apt");
 });
 
 Deno.test("resolvePackageName - apt falls back to canonical name", () => {
@@ -45,7 +45,7 @@ Deno.test("resolvePackageName - apt falls back to canonical name", () => {
 });
 
 Deno.test("resolvePackageName - yum override used when set", () => {
-  assertEquals(resolvePackageName(pkg({ yum: "testpkg-yum" }), platform("yum", "linux")), "testpkg-yum");
+  assertEquals(resolvePackageName(pkg({ name: "testpkg", yum: "testpkg-yum" }), platform("yum", "linux")), "testpkg-yum");
 });
 
 Deno.test("resolvePackageName - yum falls back to canonical name", () => {
@@ -53,7 +53,7 @@ Deno.test("resolvePackageName - yum falls back to canonical name", () => {
 });
 
 Deno.test("resolvePackageName - dnf uses yum override", () => {
-  assertEquals(resolvePackageName(pkg({ yum: "testpkg-yum" }), platform("dnf", "linux")), "testpkg-yum");
+  assertEquals(resolvePackageName(pkg({ name: "testpkg", yum: "testpkg-yum" }), platform("dnf", "linux")), "testpkg-yum");
 });
 
 Deno.test("resolvePackageName - dnf falls back to canonical name", () => {
@@ -73,13 +73,11 @@ Deno.test("interpolateTemplate - multiple references replaced", () => {
   const outputs: OutputStore = new Map();
   outputs.set("cmd-a", { host: "localhost" });
   outputs.set("cmd-b", { port: "5432" });
-  const tpl = "{{output.cmd-a.host}}:{{output.cmd-b.port}}";
-  assertEquals(interpolateTemplate(tpl, outputs), "localhost:5432");
+  assertEquals(interpolateTemplate("{{output.cmd-a.host}}:{{output.cmd-b.port}}", outputs), "localhost:5432");
 });
 
 Deno.test("interpolateTemplate - missing resource leaves reference intact", () => {
-  const outputs: OutputStore = new Map();
-  assertEquals(interpolateTemplate("{{output.missing.key}}", outputs), "{{output.missing.key}}");
+  assertEquals(interpolateTemplate("{{output.missing.key}}", new Map()), "{{output.missing.key}}");
 });
 
 Deno.test("interpolateTemplate - missing key leaves reference intact", () => {
@@ -88,105 +86,180 @@ Deno.test("interpolateTemplate - missing key leaves reference intact", () => {
 });
 
 Deno.test("interpolateTemplate - no references returns content unchanged", () => {
-  const outputs: OutputStore = new Map([["cmd-a", { x: "y" }]]);
-  assertEquals(interpolateTemplate("plain text here", outputs), "plain text here");
+  assertEquals(interpolateTemplate("plain text here", new Map([["cmd-a", { x: "y" }]])), "plain text here");
 });
 
 Deno.test("interpolateTemplate - empty content returns empty", () => {
   assertEquals(interpolateTemplate("", new Map()), "");
 });
 
-
 // ============================================================
-// CommandExecutor.check — uses real simple commands
+// Package class — constructor field round-trip
 // ============================================================
 
-function cmdResource(overrides: Partial<CommandResource> = {}): CommandResource {
-  return { id: "cmd-test", type: "command", run: "echo ok", ...overrides };
-}
-
-const anyPlatform = platform("brew");
-
-Deno.test("CommandExecutor.check - returns false when no check command", async () => {
-  const result = await CommandExecutor.check(cmdResource(), anyPlatform);
-  assertEquals(result, false);
+Deno.test("Package constructor sets all fields", () => {
+  const app = new App();
+  const pkg = new Package(app, "git", { name: "git", brew: "git-brew", brewCask: "git-cask", apt: "git-apt", yum: "git-yum", dependsOn: ["base"] });
+  assertEquals(pkg.id, "git");
+  assertEquals(pkg.name, "git");
+  assertEquals(pkg.brew, "git-brew");
+  assertEquals(pkg.brewCask, "git-cask");
+  assertEquals(pkg.apt, "git-apt");
+  assertEquals(pkg.yum, "git-yum");
+  assertEquals(pkg.dependsOn, ["base"]);
 });
 
-Deno.test("CommandExecutor.check - returns true when check exits 0", async () => {
-  const result = await CommandExecutor.check(cmdResource({ check: "true" }), anyPlatform);
-  assertEquals(result, true);
-});
-
-Deno.test("CommandExecutor.check - returns false when check exits non-zero", async () => {
-  const result = await CommandExecutor.check(cmdResource({ check: "false" }), anyPlatform);
-  assertEquals(result, false);
+Deno.test("Package constructor defaults optional fields", () => {
+  const app = new App();
+  const pkg = new Package(app, "curl", { name: "curl" });
+  assertEquals(pkg.brew, undefined);
+  assertEquals(pkg.brewCask, undefined);
+  assertEquals(pkg.apt, undefined);
+  assertEquals(pkg.yum, undefined);
+  assertEquals(pkg.dependsOn, []);
 });
 
 // ============================================================
-// CommandExecutor.apply — captureOutput, critical failure
+// Dotfile class — constructor field round-trip
 // ============================================================
 
-Deno.test("CommandExecutor.apply - successful command returns applied", async () => {
+Deno.test("Dotfile constructor sets all fields", () => {
+  const app = new App();
+  const df = new Dotfile(app, "gitconfig", { source: "./gitconfig", destination: "~/.gitconfig", template: true, dependsOn: ["git"] });
+  assertEquals(df.id, "gitconfig");
+  assertEquals(df.source, "./gitconfig");
+  assertEquals(df.destination, "~/.gitconfig");
+  assertEquals(df.template, true);
+  assertEquals(df.dependsOn, ["git"]);
+});
+
+Deno.test("Dotfile constructor defaults optional fields", () => {
+  const app = new App();
+  const df = new Dotfile(app, "df", { source: "s", destination: "d" });
+  assertEquals(df.template, undefined);
+  assertEquals(df.dependsOn, []);
+});
+
+// ============================================================
+// Command class — constructor field round-trip
+// ============================================================
+
+Deno.test("Command constructor sets all fields", () => {
+  const app = new App();
+  const cmd = new Command(app, "setup", { run: "echo setup", check: "true", critical: true, captureOutput: "ver", dependsOn: ["git"] });
+  assertEquals(cmd.id, "setup");
+  assertEquals(cmd.run, "echo setup");
+  assertEquals(cmd.checkCmd, "true");
+  assertEquals(cmd.critical, true);
+  assertEquals(cmd.captureOutput, "ver");
+  assertEquals(cmd.dependsOn, ["git"]);
+});
+
+Deno.test("Command constructor defaults optional fields", () => {
+  const app = new App();
+  const cmd = new Command(app, "cmd", { run: "echo" });
+  assertEquals(cmd.checkCmd, undefined);
+  assertEquals(cmd.critical, undefined);
+  assertEquals(cmd.captureOutput, undefined);
+  assertEquals(cmd.dependsOn, []);
+});
+
+// ============================================================
+// Command class — check/apply via real commands
+// ============================================================
+
+Deno.test("Command.check - returns false when no check command", async () => {
+  const app = new App();
+  const cmd = new Command(app, "cmd", { run: "echo ok" });
+  assertEquals(await cmd.check(platform("brew")), false);
+});
+
+Deno.test("Command.check - returns true when check exits 0", async () => {
+  const app = new App();
+  const cmd = new Command(app, "cmd", { run: "echo ok", check: "true" });
+  assertEquals(await cmd.check(platform("brew")), true);
+});
+
+Deno.test("Command.check - returns false when check exits non-zero", async () => {
+  const app = new App();
+  const cmd = new Command(app, "cmd", { run: "echo ok", check: "false" });
+  assertEquals(await cmd.check(platform("brew")), false);
+});
+
+Deno.test("Command.apply - successful command returns applied", async () => {
+  const app = new App();
+  const cmd = new Command(app, "cmd", { run: "echo hello" });
   const outputs: OutputStore = new Map();
-  const result = await CommandExecutor.apply(cmdResource({ run: "echo hello" }), anyPlatform, outputs);
+  const result = await cmd.apply(platform("brew"), outputs);
   assertEquals(result.status, "applied");
 });
 
-Deno.test("CommandExecutor.apply - captureOutput stores stdout", async () => {
+Deno.test("Command.apply - captureOutput stores stdout", async () => {
+  const app = new App();
+  const cmd = new Command(app, "cmd", { run: "echo captured-value", captureOutput: "myKey" });
   const outputs: OutputStore = new Map();
-  const r = cmdResource({ run: "echo captured-value", captureOutput: "myKey" });
-  const result = await CommandExecutor.apply(r, anyPlatform, outputs);
+  const result = await cmd.apply(platform("brew"), outputs);
   assertEquals(result.status, "applied");
   assertEquals(result.outputs?.myKey, "captured-value");
-  assertEquals(outputs.get("cmd-test")?.myKey, "captured-value");
+  assertEquals(outputs.get("cmd")?.myKey, "captured-value");
 });
 
-Deno.test("CommandExecutor.apply - failed non-critical returns failed", async () => {
+Deno.test("Command.apply - failed non-critical returns failed", async () => {
+  const app = new App();
+  const cmd = new Command(app, "cmd", { run: "false" });
   const outputs: OutputStore = new Map();
-  const r = cmdResource({ run: "false" });
-  const result = await CommandExecutor.apply(r, anyPlatform, outputs);
+  const result = await cmd.apply(platform("brew"), outputs);
   assertEquals(result.status, "failed");
 });
 
-Deno.test("CommandExecutor.apply - failed critical throws error", async () => {
+Deno.test("Command.apply - failed critical throws error", async () => {
+  const app = new App();
+  const cmd = new Command(app, "cmd", { run: "false", critical: true });
   const outputs: OutputStore = new Map();
-  const r = cmdResource({ run: "false", critical: true });
-  let threw = false;
-  try {
-    await CommandExecutor.apply(r, anyPlatform, outputs);
-  } catch (e) {
-    threw = true;
-    assertEquals((e as Error).message.includes("critical"), true);
-  }
-  assertEquals(threw, true);
+  await assertRejects(
+    () => cmd.apply(platform("brew"), outputs),
+    Error,
+    "critical",
+  );
 });
 
 // ============================================================
-// SecretExecutor.check — destination existence
+// Secret class — constructor field round-trip
 // ============================================================
 
-Deno.test("SecretExecutor.check - returns false when destination missing", async () => {
-  const r: SecretResource = {
-    id: "sec-test",
-    type: "secret",
-    source: "secrets/test.age",
-    destination: "/tmp/dacha-secret-does-not-exist-" + Date.now(),
-  };
-  const result = await SecretExecutor.check(r, anyPlatform);
-  assertEquals(result, false);
+Deno.test("Secret constructor sets all fields", () => {
+  const app = new App();
+  const sec = new Secret(app, "key", { source: "secrets/key.age", destination: "~/.ssh/key", permissions: "0600", dependsOn: ["git"] });
+  assertEquals(sec.id, "key");
+  assertEquals(sec.source, "secrets/key.age");
+  assertEquals(sec.destination, "~/.ssh/key");
+  assertEquals(sec.permissions, "0600");
+  assertEquals(sec.dependsOn, ["git"]);
 });
 
-Deno.test("SecretExecutor.check - returns true when destination exists", async () => {
+Deno.test("Secret constructor defaults optional fields", () => {
+  const app = new App();
+  const sec = new Secret(app, "sec", { source: "s", destination: "d" });
+  assertEquals(sec.permissions, undefined);
+  assertEquals(sec.dependsOn, []);
+});
+
+// ============================================================
+// Secret class — check via real filesystem
+// ============================================================
+
+Deno.test("Secret.check - returns false when destination missing", async () => {
+  const app = new App();
+  const sec = new Secret(app, "sec", { source: "secrets/test.age", destination: "/tmp/dacha-secret-does-not-exist-" + Date.now() });
+  assertEquals(await sec.check(platform("brew")), false);
+});
+
+Deno.test("Secret.check - returns true when destination exists", async () => {
   const tmpFile = await Deno.makeTempFile({ prefix: "dacha-sec-test-" });
   try {
-    const r: SecretResource = {
-      id: "sec-test",
-      type: "secret",
-      source: "secrets/test.age",
-      destination: tmpFile,
-    };
-    const result = await SecretExecutor.check(r, anyPlatform);
-    assertEquals(result, true);
+    const app = new App();
+    const sec = new Secret(app, "sec", { source: "secrets/test.age", destination: tmpFile });
+    assertEquals(await sec.check(platform("brew")), true);
   } finally {
     await Deno.remove(tmpFile);
   }

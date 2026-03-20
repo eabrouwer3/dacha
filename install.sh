@@ -161,8 +161,8 @@ main() {
   check_path
 
   if [ -n "$REPO_URL" ]; then
-    info "Running: ${BINARY_NAME} init ${REPO_URL}"
-    "${INSTALL_DIR}/${BINARY_NAME}" init "$REPO_URL"
+    info "Running: ${BINARY_NAME} init ${REPO_URL} --path ~/.dacha"
+    "${INSTALL_DIR}/${BINARY_NAME}" init "$REPO_URL" --path "$HOME/.dacha"
   fi
 
   success "Done! Run 'dacha --help' to get started."

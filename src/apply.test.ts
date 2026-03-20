@@ -1,6 +1,8 @@
 import { assertEquals } from "@std/assert";
 import { apply } from "./apply.ts";
-import type { Platform, ResolvedResource, ResolvedState } from "./types.ts";
+import { App } from "./app.ts";
+import { Command } from "./resources/command.ts";
+import type { Platform } from "./types.ts";
 
 // --- Helpers ---
 
@@ -10,46 +12,32 @@ const testPlatform: Platform = {
   packageManager: "brew",
 };
 
-function makeState(resources: ResolvedResource[]): ResolvedState {
-  return {
-    platform: testPlatform,
-    resources,
-    metadata: {
-      generatedAt: new Date().toISOString(),
-      repoPath: "/tmp/test-repo",
-      profileChain: ["test"],
-      params: {},
-    },
-  };
-}
-
-function cmdResource(
+/** Create a Command resource attached to a fresh App scope. */
+function cmd(
+  app: App,
   id: string,
-  overrides: Record<string, unknown> = {},
-): ResolvedResource {
-  return {
-    id,
-    type: "command",
-    action: { run: "echo ok", ...overrides },
-    dependsOn: [],
-    contributedBy: "test",
-  };
+  overrides: { run?: string; check?: string; critical?: boolean; dependsOn?: string[] } = {},
+): Command {
+  return new Command(app, id, {
+    run: overrides.run ?? "echo ok",
+    check: overrides.check,
+    critical: overrides.critical,
+    dependsOn: overrides.dependsOn,
+  });
 }
 
 // --- Dry-run: no side effects ---
 
 Deno.test("apply dry-run - does not execute commands (no side effects)", async () => {
   const marker = `/tmp/dacha-apply-dryrun-${Date.now()}`;
-  const state = makeState([
-    cmdResource("cmd-touch", { run: `touch ${marker}` }),
-  ]);
+  const app = new App();
+  const resources = [cmd(app, "cmd-touch", { run: `touch ${marker}` })];
 
-  const report = await apply(state, { dryRun: true });
+  const report = await apply(resources, testPlatform, { dryRun: true });
 
-  // Resource reported as "would apply"
   assertEquals(report.applied.includes("cmd-touch"), true);
 
-  // But the file should NOT exist — command was not actually run
+  // The file should NOT exist — command was not actually run
   let exists = false;
   try {
     await Deno.stat(marker);
@@ -63,12 +51,13 @@ Deno.test("apply dry-run - does not execute commands (no side effects)", async (
 // --- Dependent-skip on failure ---
 
 Deno.test("apply - dependent resources are skipped when a dependency fails", async () => {
-  const state = makeState([
-    cmdResource("cmd-fail", { run: "false" }),
-    { ...cmdResource("cmd-child", { run: "echo child" }), dependsOn: ["cmd-fail"] },
-  ]);
+  const app = new App();
+  const resources = [
+    cmd(app, "cmd-fail", { run: "false" }),
+    cmd(app, "cmd-child", { run: "echo child", dependsOn: ["cmd-fail"] }),
+  ];
 
-  const report = await apply(state);
+  const report = await apply(resources, testPlatform);
 
   assertEquals(report.failed.length, 1);
   assertEquals(report.failed[0].id, "cmd-fail");
@@ -76,13 +65,14 @@ Deno.test("apply - dependent resources are skipped when a dependency fails", asy
 });
 
 Deno.test("apply - transitive dependents are also skipped", async () => {
-  const state = makeState([
-    cmdResource("cmd-fail", { run: "false" }),
-    { ...cmdResource("cmd-mid", { run: "echo mid" }), dependsOn: ["cmd-fail"] },
-    { ...cmdResource("cmd-leaf", { run: "echo leaf" }), dependsOn: ["cmd-mid"] },
-  ]);
+  const app = new App();
+  const resources = [
+    cmd(app, "cmd-fail", { run: "false" }),
+    cmd(app, "cmd-mid", { run: "echo mid", dependsOn: ["cmd-fail"] }),
+    cmd(app, "cmd-leaf", { run: "echo leaf", dependsOn: ["cmd-mid"] }),
+  ];
 
-  const report = await apply(state);
+  const report = await apply(resources, testPlatform);
 
   assertEquals(report.failed[0].id, "cmd-fail");
   assertEquals(report.skipped.includes("cmd-mid"), true);
@@ -92,14 +82,15 @@ Deno.test("apply - transitive dependents are also skipped", async () => {
 // --- Summary report accuracy ---
 
 Deno.test("apply - summary counts are accurate", async () => {
-  const state = makeState([
-    cmdResource("cmd-ok", { run: "echo ok" }),
-    cmdResource("cmd-done", { run: "echo done", check: "true" }),
-    cmdResource("cmd-fail", { run: "false" }),
-    { ...cmdResource("cmd-dep", { run: "echo dep" }), dependsOn: ["cmd-fail"] },
-  ]);
+  const app = new App();
+  const resources = [
+    cmd(app, "cmd-ok", { run: "echo ok" }),
+    cmd(app, "cmd-done", { run: "echo done", check: "true" }),
+    cmd(app, "cmd-fail", { run: "false" }),
+    cmd(app, "cmd-dep", { run: "echo dep", dependsOn: ["cmd-fail"] }),
+  ];
 
-  const report = await apply(state);
+  const report = await apply(resources, testPlatform);
 
   assertEquals(report.applied.length, 1); // cmd-ok
   assertEquals(report.applied[0], "cmd-ok");
@@ -111,11 +102,12 @@ Deno.test("apply - summary counts are accurate", async () => {
 // --- Already-done resources are skipped ---
 
 Deno.test("apply - resource with check=true is skipped as already done", async () => {
-  const state = makeState([
-    cmdResource("cmd-done", { run: "echo should-not-run", check: "true" }),
-  ]);
+  const app = new App();
+  const resources = [
+    cmd(app, "cmd-done", { run: "echo should-not-run", check: "true" }),
+  ];
 
-  const report = await apply(state);
+  const report = await apply(resources, testPlatform);
 
   assertEquals(report.skipped.includes("cmd-done"), true);
   assertEquals(report.applied.length, 0);

@@ -1,14 +1,17 @@
-// Dotfile resource executor — copy files to destination, with template support.
+// Dotfile resource — copy files to destination, with template support.
 
-import type {
-  DotfileResource,
-  OutputStore,
-  Platform,
-  ResourceExecutor,
-  ResourceResult,
-} from "../types.ts";
+import { Resource } from "../resource.ts";
+import type { App } from "../app.ts";
+import type { OutputStore, Platform, ResourceResult } from "../types.ts";
 import { debug, info } from "../util/log.ts";
 import { dirname } from "@std/path";
+
+export interface DotfileProps {
+  source: string;
+  destination: string;
+  template?: boolean;
+  dependsOn?: string[];
+}
 
 /** Resolve `~` prefix to the user's home directory. */
 function resolveHome(path: string): string {
@@ -49,37 +52,50 @@ export function interpolateTemplate(
   });
 }
 
-export const DotfileExecutor: ResourceExecutor<DotfileResource> = {
-  async check(resource, _platform: Platform): Promise<boolean> {
-    const dest = resolveHome(resource.destination);
-    const srcHash = await fileHash(resource.source);
+export class Dotfile extends Resource {
+  static readonly resourceType = "dotfile";
+
+  readonly source: string;
+  readonly destination: string;
+  readonly template?: boolean;
+
+  constructor(scope: Resource | App, id: string, props: DotfileProps) {
+    super(scope, id, props);
+    this.source = props.source;
+    this.destination = props.destination;
+    this.template = props.template;
+  }
+
+  async check(_platform: Platform): Promise<boolean> {
+    const dest = resolveHome(this.destination);
+    const srcHash = await fileHash(this.source);
     const destHash = await fileHash(dest);
 
     if (srcHash === null) {
-      debug(`dotfile check: source missing ${resource.source}`);
+      debug(`dotfile check: source missing ${this.source}`);
       return false;
     }
 
     const match = srcHash === destHash;
-    debug(`dotfile check: ${resource.id} src=${srcHash.slice(0, 8)} dest=${destHash?.slice(0, 8) ?? "missing"} match=${match}`);
+    debug(`dotfile check: ${this.id} src=${srcHash.slice(0, 8)} dest=${destHash?.slice(0, 8) ?? "missing"} match=${match}`);
     return match;
-  },
+  }
 
-  async apply(resource, _platform: Platform, outputs: OutputStore): Promise<ResourceResult> {
-    const dest = resolveHome(resource.destination);
+  async apply(_platform: Platform, outputs: OutputStore): Promise<ResourceResult> {
+    const dest = resolveHome(this.destination);
 
     let content: Uint8Array;
     try {
-      content = await Deno.readFile(resource.source);
+      content = await Deno.readFile(this.source);
     } catch (err) {
       return {
         status: "failed",
-        error: `cannot read source ${resource.source}: ${err}`,
+        error: `cannot read source ${this.source}: ${err}`,
       };
     }
 
     // Template interpolation if enabled
-    if (resource.template) {
+    if (this.template) {
       const text = new TextDecoder().decode(content);
       const interpolated = interpolateTemplate(text, outputs);
       content = new TextEncoder().encode(interpolated);
@@ -90,9 +106,19 @@ export const DotfileExecutor: ResourceExecutor<DotfileResource> = {
     await Deno.mkdir(parentDir, { recursive: true });
 
     // Write file to destination
-    info(`copying ${resource.source} → ${resource.destination}`);
+    info(`copying ${this.source} → ${this.destination}`);
     await Deno.writeFile(dest, content);
 
     return { status: "applied" };
-  },
-};
+  }
+
+  protected toProps() {
+    return {
+      id: this.id,
+      source: this.source,
+      destination: this.destination,
+      template: this.template,
+      dependsOn: this.dependsOn,
+    };
+  }
+}

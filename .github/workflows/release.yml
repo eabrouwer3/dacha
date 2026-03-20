@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   build:
@@ -32,7 +33,7 @@ jobs:
         with:
           deno-version: v2.x
       - name: Compile
-        run: deno compile --allow-all --target ${{ matrix.target }} --output ${{ matrix.artifact }} src/cli.ts
+        run: deno compile --allow-read --allow-write --allow-env --allow-net --allow-run --allow-sys --target ${{ matrix.target }} --output ${{ matrix.artifact }} src/cli.ts
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
@@ -53,3 +54,19 @@ jobs:
         with:
           files: artifacts/*
           generate_release_notes: true
+
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Publish to GitHub Packages
+        run: deno publish --allow-dirty
+        env:
+          DENO_AUTH_TOKENS: ${{ secrets.GITHUB_TOKEN }}@ghcr.io

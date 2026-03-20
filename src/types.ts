@@ -8,61 +8,29 @@ export interface Platform {
 
 export type PackageManagerType = "brew" | "apt" | "yum" | "dnf";
 
-// Base resource — all resources extend this
-export interface Resource {
-  id: string;
-  type: "package" | "dotfile" | "command" | "secret";
-  dependsOn?: string[];
-  outputs?: Record<string, string>;
-  contributedBy?: string;
-}
-
-export interface PackageResource extends Resource {
-  type: "package";
-  name: string;
-  brew?: string;
-  brewCask?: string;
-  apt?: string;
-  yum?: string;
-  onlyOn?: PlatformFilter;
-}
-
-export interface DotfileResource extends Resource {
-  type: "dotfile";
-  source: string;
-  destination: string;
-  template?: boolean;
-}
-
-export interface CommandResource extends Resource {
-  type: "command";
-  run: string;
-  check?: string;
-  critical?: boolean;
-  onlyOn?: PlatformFilter;
-  captureOutput?: string;
-}
-
-export interface SecretResource extends Resource {
-  type: "secret";
-  source: string;
-  destination: string;
-  permissions?: string;
-}
-
 export interface PlatformFilter {
   os?: Platform["os"];
   arch?: Platform["arch"];
   distro?: string;
 }
 
+/** Minimal resource definition used by the profile system. */
+export interface ResourceDef {
+  id: string;
+  type: string;
+  dependsOn?: string[];
+  outputs?: Record<string, string>;
+  contributedBy?: string;
+  [key: string]: unknown;
+}
+
 export interface Profile {
   name: string;
   extends?: Profile[];
-  packages?: PackageResource[];
-  dotfiles?: DotfileResource[];
-  commands?: CommandResource[];
-  secrets?: SecretResource[];
+  packages?: ResourceDef[];
+  dotfiles?: ResourceDef[];
+  commands?: ResourceDef[];
+  secrets?: ResourceDef[];
 }
 
 export interface DachaConfig {
@@ -111,19 +79,10 @@ export interface ResolvedState {
 
 export interface ResolvedResource {
   id: string;
-  type: Resource["type"];
+  type: string;
   action: Record<string, unknown>;
   dependsOn: string[];
   contributedBy: string;
-}
-
-export interface ResourceExecutor<T extends Resource> {
-  check(resource: T, platform: Platform): Promise<boolean>;
-  apply(
-    resource: T,
-    platform: Platform,
-    outputs: OutputStore,
-  ): Promise<ResourceResult>;
 }
 
 export interface ResourceResult {

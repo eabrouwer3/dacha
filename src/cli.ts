@@ -24,7 +24,7 @@ root
   .command("init")
   .description("Clone a dotfiles repo and bootstrap the system.")
   .arguments("<url:string>")
-  .option("--path <path:string>", "Local clone path (default ~/.dotfiles).")
+  .option("--path <path:string>", "Local clone path (default ~/.dacha).")
   .option("--reconfigure", "Reset saved parameters and re-prompt.")
   .option("-y, --yes", "Auto-confirm prompts.")
   .action(async ({ path, reconfigure, yes }, url) => {
@@ -207,6 +207,30 @@ paramsCmd
 
 root.command("params", paramsCmd);
 
+// --- permissions ---
+
+const permissionsCmd = new Command()
+  .description("Manage Deno permission approvals.");
+
+permissionsCmd
+  .command("show")
+  .description("Display currently granted permissions.")
+  .action(async () => {
+    const { loadPermissions, formatPermissions } = await import("./permissions.ts");
+    const store = await loadPermissions();
+    console.log(formatPermissions(store));
+  });
+
+permissionsCmd
+  .command("reset")
+  .description("Reset permissions — will re-prompt on next run.")
+  .action(async () => {
+    const { resetPermissions } = await import("./permissions.ts");
+    await resetPermissions();
+  });
+
+root.command("permissions", permissionsCmd);
+
 // --- Helpers ---
 
 /** Read the global config to find the repo path. */
@@ -239,5 +263,9 @@ async function resolveConfigPath(): Promise<string> {
 }
 
 // --- Parse and run ---
+
+// Ensure Deno permissions are granted before running commands
+const { ensurePermissions } = await import("./permissions.ts");
+await ensurePermissions();
 
 await root.parse(Deno.args);

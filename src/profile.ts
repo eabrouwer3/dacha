@@ -3,12 +3,8 @@
 // Child resources replace parent resources on matching id.
 
 import type {
-  CommandResource,
-  DotfileResource,
-  PackageResource,
   Profile,
-  Resource,
-  SecretResource,
+  ResourceDef,
 } from "./types.ts";
 
 /** Resource array key names on a Profile. */
@@ -26,7 +22,7 @@ type ResourceKey = typeof RESOURCE_KEYS[number];
  * Returns a new array with parent resources first, then child resources,
  * with duplicates (by id) resolved in favor of the later (child) entry.
  */
-export function mergeResources<T extends Resource>(
+export function mergeResources<T extends ResourceDef>(
   parent: T[],
   child: T[],
 ): T[] {
@@ -41,11 +37,11 @@ function mergeProfiles(base: Profile, overlay: Profile): Profile {
   const result: Profile = { name: overlay.name };
 
   for (const key of RESOURCE_KEYS) {
-    const baseArr = base[key] as Resource[] | undefined;
-    const overlayArr = overlay[key] as Resource[] | undefined;
+    const baseArr = base[key] as ResourceDef[] | undefined;
+    const overlayArr = overlay[key] as ResourceDef[] | undefined;
 
     if (baseArr || overlayArr) {
-      (result as Record<ResourceKey, Resource[]>)[key] = mergeResources(
+      (result as Record<ResourceKey, ResourceDef[]>)[key] = mergeResources(
         baseArr ?? [],
         overlayArr ?? [],
       );
@@ -60,9 +56,9 @@ function tagResources(profile: Profile): Profile {
   const tagged: Profile = { name: profile.name };
 
   for (const key of RESOURCE_KEYS) {
-    const arr = profile[key] as Resource[] | undefined;
+    const arr = profile[key] as ResourceDef[] | undefined;
     if (arr) {
-      (tagged as Record<ResourceKey, Resource[]>)[key] = arr.map((r) => ({
+      (tagged as Record<ResourceKey, ResourceDef[]>)[key] = arr.map((r) => ({
         ...r,
         contributedBy: profile.name,
       }));

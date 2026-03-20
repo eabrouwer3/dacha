@@ -1,6 +1,7 @@
 // Synthesizer — evaluates a dacha config into a fully resolved state JSON.
-// Detects platform, loads params, resolves profiles, filters by platform
-// conditionals, builds dependency graph, and returns ResolvedState.
+// Supports two paths:
+//   1. NEW (v2): Config returns an App → walk scope tree via collectFromTree
+//   2. LEGACY: Config returns a DachaConfig with profiles → profile resolution
 
 import type {
   DachaConfig,
@@ -9,8 +10,10 @@ import type {
   PlatformFilter,
   ResolvedResource,
   ResolvedState,
-  Resource,
+  ResourceDef,
 } from "./types.ts";
+import { App } from "./app.ts";
+import { Resource } from "./resource.ts";
 import { detectPlatform, resolvePaths } from "./platform.ts";
 import { resolveProfile } from "./profile.ts";
 import { buildGraph } from "./graph.ts";
@@ -57,96 +60,158 @@ function collectProfileChain(
   return names;
 }
 
-/** Filter resources that don't match the current platform via onlyOn. */
-function filterByPlatform(
-  resources: Resource[],
-  platform: Platform,
-): Resource[] {
-  return resources.filter((r) => {
-    const filter = (r as { onlyOn?: PlatformFilter }).onlyOn;
-    if (!filter) return true;
-    return matchesPlatform(filter, platform);
-  });
-}
+/**
+ * Walk the scope tree from the App root and collect all leaf resources.
+ * Leaf resources are those with no children.
+ * Child resources inherit parent dependencies.
+ */
+export function collectFromTree(app: App): Resource[] {
+  const leaves: Resource[] = [];
 
-/** Map a resource to its ResolvedResource representation. */
-function toResolvedResource(r: Resource): ResolvedResource {
-  const { id, type, dependsOn, contributedBy, ...rest } = r;
-  const action = { ...rest };
-  delete (action as Record<string, unknown>).outputs;
+  function walk(children: Resource[], parentDeps: string[]): void {
+    for (const child of children) {
+      // Inherit parent dependencies
+      for (const dep of parentDeps) {
+        if (!child.dependsOn.includes(dep)) {
+          child.dependsOn.push(dep);
+        }
+      }
 
-  return {
-    id,
-    type,
-    action: action as Record<string, unknown>,
-    dependsOn: dependsOn ?? [],
-    contributedBy: contributedBy ?? "unknown",
-  };
+      if (child._children.length === 0) {
+        leaves.push(child);
+      } else {
+        walk(child._children, child.dependsOn);
+      }
+    }
+  }
+
+  walk(app._children, []);
+  return leaves;
 }
 
 /**
- * Synthesize a resolved state from a dacha config.
+ * Synthesize a resolved state from a dacha config or App instance.
  *
- * Accepts either a file path to dynamically import, or a DachaConfig object
- * directly (useful for testing without file I/O).
+ * Accepts:
+ *   - An App instance directly (v2 scope tree path)
+ *   - A file path to dynamically import (may return App or DachaConfig)
+ *   - A DachaConfig object directly (legacy profile path)
  */
 export async function synth(
-  configOrPath: string | DachaConfig,
+  configOrPath: string | DachaConfig | App,
   opts?: SynthOpts,
 ): Promise<ResolvedState> {
   const platform = detectPlatform();
   const paths = resolvePaths();
   info(`detected platform: ${platform.os}/${platform.arch}`);
 
-  let config: DachaConfig;
-  let params: Params = {};
+  // --- App instance: v2 scope tree path ---
+  if (configOrPath instanceof App) {
+    return synthFromApp(configOrPath, platform);
+  }
 
+  // --- String path: dynamic import, may return App or DachaConfig ---
   if (typeof configOrPath === "string") {
     debug(`loading config from ${configOrPath}`);
     const mod = await import(configOrPath);
     const configFn = mod.default;
 
     // First pass: get param definitions (call with empty params)
-    const initial: DachaConfig = typeof configFn === "function"
+    const initial = typeof configFn === "function"
       ? configFn({ platform, params: {}, paths })
       : configFn;
 
-    // Load params from lock file, prompting for missing values
+    // Check if the config returned an App (v2 style)
+    if (initial instanceof App) {
+      return synthFromApp(initial, platform);
+    }
+
+    // Legacy DachaConfig path — load params and re-evaluate
+    const config = initial as DachaConfig;
     const lockFilePath = opts?.lockFilePath ??
       join(paths.configDir, "dacha", "params.lock.json");
-    params = initial.params
-      ? await loadParams(initial.params, lockFilePath)
+    const params: Params = config.params
+      ? await loadParams(config.params, lockFilePath)
       : {};
 
     // Second pass: re-evaluate config with resolved params
-    config = typeof configFn === "function"
+    const finalConfig: DachaConfig = typeof configFn === "function"
       ? configFn({ platform, params, paths })
-      : initial;
-  } else {
-    config = configOrPath;
+      : config;
+
+    // If second pass returns an App, use scope tree path
+    if (finalConfig instanceof App) {
+      return synthFromApp(finalConfig as unknown as App, platform);
+    }
+
+    return synthFromDachaConfig(finalConfig, platform, params);
   }
 
+  // --- DachaConfig object: legacy profile path ---
+  return synthFromDachaConfig(configOrPath, platform, {});
+}
+
+/** Synthesize from an App instance by walking the scope tree. */
+function synthFromApp(app: App, platform: Platform): ResolvedState {
+  const leaves = collectFromTree(app);
+  debug(`scope tree: ${leaves.length} leaf resources collected`);
+
+  // Convert to ResolvedResource for the graph builder
+  const resolved = leaves.map((r) => r.toResolved());
+
+  // Build dependency graph and topological sort
+  // buildGraph expects objects with id/dependsOn — ResolvedResource has these
+  const sorted = buildGraph(resolved as unknown as ResourceDef[]);
+
+  // Map sorted back to ResolvedResource format
+  const resources: ResolvedResource[] = sorted.map((r) => {
+    const { id, type, dependsOn, contributedBy, ...rest } = r;
+    const action = { ...rest };
+    delete (action as Record<string, unknown>).outputs;
+    return {
+      id,
+      type,
+      action: action as Record<string, unknown>,
+      dependsOn: dependsOn ?? [],
+      contributedBy: contributedBy ?? "unknown",
+    };
+  });
+
+  return {
+    platform,
+    resources,
+    metadata: {
+      generatedAt: new Date().toISOString(),
+      repoPath: "",
+      profileChain: [],
+      params: {},
+    },
+  };
+}
+
+/** Synthesize from a legacy DachaConfig with profile resolution. */
+function synthFromDachaConfig(
+  config: DachaConfig,
+  platform: Platform,
+  params: Params,
+): ResolvedState {
   // Resolve the profile chain
   const resolved = resolveProfile(config.target);
   const profileChain = collectProfileChain(config.target);
   debug(`profile chain: ${profileChain.join(" → ")}`);
 
   // Collect all resources from the resolved profile
-  const allResources: Resource[] = [
+  const allResources: ResourceDef[] = [
     ...(resolved.packages ?? []),
     ...(resolved.dotfiles ?? []),
     ...(resolved.commands ?? []),
     ...(resolved.secrets ?? []),
   ];
 
-  // Filter by platform conditionals (onlyOn)
-  const filtered = filterByPlatform(allResources, platform);
-  debug(
-    `resources: ${allResources.length} total, ${filtered.length} after platform filter`,
-  );
+  debug(`resources: ${allResources.length} total`);
 
   // Build dependency graph and topological sort
-  const sorted = buildGraph(filtered);
+  const sorted = buildGraph(allResources);
 
   // Map to ResolvedResource format
   const resources = sorted.map(toResolvedResource);
@@ -160,5 +225,20 @@ export async function synth(
       profileChain,
       params,
     },
+  };
+}
+
+/** Map a resource def to its ResolvedResource representation (legacy path). */
+function toResolvedResource(r: ResourceDef): ResolvedResource {
+  const { id, type, dependsOn, contributedBy, ...rest } = r;
+  const action = { ...rest };
+  delete (action as Record<string, unknown>).outputs;
+
+  return {
+    id,
+    type,
+    action: action as Record<string, unknown>,
+    dependsOn: dependsOn ?? [],
+    contributedBy: contributedBy ?? "unknown",
   };
 }

@@ -1,7 +1,7 @@
 import { assertEquals } from "@std/assert";
 import fc from "fast-check";
 import { resolveProfile } from "./profile.ts";
-import type { PackageResource, Profile } from "./types.ts";
+import type { Profile, ResourceDef } from "./types.ts";
 
 // --- No extends ---
 
@@ -181,7 +181,7 @@ Deno.test("resolveProfile - contributedBy is set to the final profile name for a
 /**
  * Arbitrary that produces a PackageResource with a fixed id but a random name.
  */
-function arbPackage(id: string): fc.Arbitrary<PackageResource> {
+function arbPackage(id: string): fc.Arbitrary<ResourceDef> {
   return fc.string({ minLength: 1, maxLength: 20 }).map((name) => ({
     id,
     type: "package" as const,

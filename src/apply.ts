@@ -1,18 +1,17 @@
 // Applier — iterates resources in topological order, checks current state,
 // applies changes, collects outputs, and reports results.
+//
+// Supports two calling conventions:
+//   1. v2: apply(resources, platform, opts?) — Resource class instances
+//   2. Legacy: apply(state, opts?) — ResolvedState (backward compat, throws)
 
 import type {
-  CommandResource,
   OutputStore,
-  ResolvedResource,
+  Platform,
   ResolvedState,
-  Resource,
-  ResourceExecutor,
 } from "./types.ts";
-import { PackageExecutor } from "./resources/package.ts";
-import { DotfileExecutor } from "./resources/dotfile.ts";
-import { CommandExecutor } from "./resources/command.ts";
-import { SecretExecutor } from "./resources/secret.ts";
+import { Resource } from "./resource.ts";
+import { Command } from "./resources/command.ts";
 import { debug, error, info, success, warn } from "./util/log.ts";
 
 /** Result of an apply run. */
@@ -22,72 +21,78 @@ export interface ApplyReport {
   failed: { id: string; error: string }[];
 }
 
-/** Reconstruct a typed Resource from a ResolvedResource. */
-function toTypedResource(r: ResolvedResource): Resource {
-  return {
-    id: r.id,
-    type: r.type,
-    dependsOn: r.dependsOn,
-    contributedBy: r.contributedBy,
-    ...r.action,
-  } as Resource;
-}
-
-/** Get the executor for a resource type. */
-// deno-lint-ignore no-explicit-any
-function getExecutor(type: Resource["type"]): ResourceExecutor<any> {
-  switch (type) {
-    case "package":
-      return PackageExecutor;
-    case "dotfile":
-      return DotfileExecutor;
-    case "command":
-      return CommandExecutor;
-    case "secret":
-      return SecretExecutor;
-  }
-}
-
 /** Options for the apply function. */
 export interface ApplyOpts {
   dryRun?: boolean;
   yes?: boolean;
 }
 
-/**
- * Apply a resolved state to the system.
- *
- * Iterates resources in topological order (as provided by synth),
- * checks each resource's current state, applies if needed, and
- * collects outputs for downstream dependencies.
- */
+/** v2 overload — Resource class instances + Platform. */
+export async function apply(
+  resources: Resource[],
+  platform: Platform,
+  opts?: ApplyOpts,
+): Promise<ApplyReport>;
+
+/** Legacy overload — ResolvedState (backward compat). */
 export async function apply(
   state: ResolvedState,
-  opts: ApplyOpts = {},
+  opts?: ApplyOpts,
+): Promise<ApplyReport>;
+
+/** Implementation — dispatches based on first argument type. */
+export async function apply(
+  resourcesOrState: Resource[] | ResolvedState,
+  platformOrOpts?: Platform | ApplyOpts,
+  maybeOpts?: ApplyOpts,
+): Promise<ApplyReport> {
+  if (Array.isArray(resourcesOrState)) {
+    const resources = resourcesOrState;
+    const platform = platformOrOpts as Platform;
+    const opts = maybeOpts ?? {};
+    return applyResources(resources, platform, opts);
+  }
+
+  // Legacy path — ResolvedState no longer supported without Resource instances.
+  throw new Error(
+    "Legacy ResolvedState apply path is no longer supported. " +
+    "Pass Resource[] instances and a Platform instead.",
+  );
+}
+
+/**
+ * Apply Resource class instances to the system.
+ *
+ * Iterates resources in order (caller provides topological sort),
+ * checks each resource's current state via resource.check(),
+ * applies if needed via resource.apply(), and collects outputs
+ * for downstream dependencies.
+ */
+async function applyResources(
+  resources: Resource[],
+  platform: Platform,
+  opts: ApplyOpts,
 ): Promise<ApplyReport> {
   const outputs: OutputStore = new Map();
   const failedIds = new Set<string>();
   const report: ApplyReport = { applied: [], skipped: [], failed: [] };
 
-  for (const resolved of state.resources) {
-    const id = resolved.id;
+  for (const resource of resources) {
+    const id = resource.id;
 
-    // Check if any dependency failed — skip with reason
-    const failedDep = resolved.dependsOn.find((dep) => failedIds.has(dep));
+    // Skip if any dependency failed — propagate so transitive dependents also skip
+    const failedDep = resource.dependsOn.find((dep) => failedIds.has(dep));
     if (failedDep) {
       const reason = `dependency "${failedDep}" failed`;
       warn(`skipping ${id}: ${reason}`);
       report.skipped.push(id);
-      failedIds.add(id); // propagate so transitive dependents also skip
+      failedIds.add(id);
       continue;
     }
 
-    const resource = toTypedResource(resolved);
-    const executor = getExecutor(resolved.type);
-
     // Check if already in desired state
     try {
-      const done = await executor.check(resource, state.platform);
+      const done = await resource.check(platform);
       if (done) {
         debug(`${id}: already up to date`);
         report.skipped.push(id);
@@ -103,14 +108,14 @@ export async function apply(
 
     // Dry-run: report what would change and move on
     if (opts.dryRun) {
-      info(`would apply: ${id} (${resolved.type})`);
+      info(`would apply: ${id}`);
       report.applied.push(id);
       continue;
     }
 
     // Apply the resource
     try {
-      const result = await executor.apply(resource, state.platform, outputs);
+      const result = await resource.apply(platform, outputs);
 
       if (result.status === "failed") {
         const msg = result.error ?? "unknown error";
@@ -119,7 +124,7 @@ export async function apply(
         failedIds.add(id);
 
         // Critical commands halt the entire apply
-        if (resolved.type === "command" && (resource as CommandResource).critical) {
+        if (resource instanceof Command && resource.critical) {
           error(`critical resource "${id}" failed — halting apply`);
           break;
         }
@@ -131,7 +136,7 @@ export async function apply(
         outputs.set(id, { ...outputs.get(id), ...result.outputs });
       }
 
-      success(`${id} (${resolved.type})`);
+      success(`${id}`);
       report.applied.push(id);
     } catch (err) {
       // Critical commands throw to halt
@@ -153,7 +158,10 @@ function printSummary(report: ApplyReport, dryRun?: boolean): void {
   const appliedLabel = dryRun ? "would apply" : "applied";
 
   console.log("");
-  info(`${label}: ${report.applied.length} ${appliedLabel}, ${report.skipped.length} skipped, ${report.failed.length} failed`);
+  info(
+    `${label}: ${report.applied.length} ${appliedLabel}, ` +
+    `${report.skipped.length} skipped, ${report.failed.length} failed`,
+  );
 
   if (report.failed.length > 0) {
     for (const f of report.failed) {

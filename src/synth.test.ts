@@ -1,5 +1,9 @@
 import { assertEquals } from "@std/assert";
-import { matchesPlatform, synth } from "./synth.ts";
+import { collectFromTree, matchesPlatform, synth } from "./synth.ts";
+import { App } from "./app.ts";
+import { Package } from "./resources/package.ts";
+import { Command } from "./resources/command.ts";
+import { Dotfile } from "./resources/dotfile.ts";
 import type { DachaConfig, Profile } from "./types.ts";
 
 // --- matchesPlatform ---
@@ -94,32 +98,6 @@ Deno.test("synth - profile chain metadata reflects inheritance chain", async () 
   assertEquals(state.metadata.profileChain, ["base", "desktop", "my-machine"]);
 });
 
-// --- synth: platform filtering excludes non-matching onlyOn ---
-
-Deno.test("synth - resources with non-matching onlyOn are excluded", async () => {
-  const currentOs = Deno.build.os === "darwin" ? "darwin" : "linux";
-  const otherOs = currentOs === "darwin" ? "linux" : "darwin";
-
-  const config: DachaConfig = {
-    repoPath: "/tmp/test-repo",
-    target: {
-      name: "test",
-      packages: [
-        { id: "pkg-always", type: "package", name: "curl" },
-        { id: "pkg-match", type: "package", name: "matched", onlyOn: { os: currentOs as "darwin" | "linux" } },
-        { id: "pkg-nomatch", type: "package", name: "excluded", onlyOn: { os: otherOs as "darwin" | "linux" } },
-      ],
-    },
-  };
-
-  const state = await synth(config);
-  const ids = state.resources.map((r) => r.id);
-
-  assertEquals(ids.includes("pkg-always"), true);
-  assertEquals(ids.includes("pkg-match"), true);
-  assertEquals(ids.includes("pkg-nomatch"), false);
-});
-
 // --- synth: resources in topological order ---
 
 Deno.test("synth - resources are in topological order (dependency before dependent)", async () => {
@@ -174,4 +152,190 @@ Deno.test("synth - does not write files or produce side effects", async () => {
     exists = false;
   }
   assertEquals(exists, false);
+});
+
+// ============================================================
+// collectFromTree — scope tree collection
+// ============================================================
+
+Deno.test("collectFromTree - single resource returns one leaf", () => {
+  const app = new App();
+  new Package(app, "git", { name: "git" });
+  const leaves = collectFromTree(app);
+  assertEquals(leaves.length, 1);
+  assertEquals(leaves[0].id, "git");
+});
+
+Deno.test("collectFromTree - two-level composite collects only leaves", () => {
+  const app = new App();
+  const parent = new Command(app, "parent", { run: "echo" });
+  new Package(parent, "child-a", { name: "a" });
+  new Package(parent, "child-b", { name: "b" });
+
+  const leaves = collectFromTree(app);
+  const ids = leaves.map((r) => r.id);
+  assertEquals(ids.length, 2);
+  assertEquals(ids.includes("child-a"), true);
+  assertEquals(ids.includes("child-b"), true);
+  // parent is not a leaf
+  assertEquals(ids.includes("parent"), false);
+});
+
+Deno.test("collectFromTree - three-level nesting collects deepest leaves", () => {
+  const app = new App();
+  const l1 = new Command(app, "l1", { run: "echo" });
+  const l2 = new Command(l1, "l2", { run: "echo" });
+  new Package(l2, "leaf", { name: "leaf" });
+
+  const leaves = collectFromTree(app);
+  assertEquals(leaves.length, 1);
+  assertEquals(leaves[0].id, "leaf");
+});
+
+Deno.test("collectFromTree - mixed flat and nested resources", () => {
+  const app = new App();
+  new Package(app, "flat-pkg", { name: "flat" });
+  const composite = new Command(app, "composite", { run: "echo" });
+  new Dotfile(composite, "nested-df", { source: "s", destination: "d" });
+
+  const leaves = collectFromTree(app);
+  const ids = leaves.map((r) => r.id);
+  assertEquals(ids.length, 2);
+  assertEquals(ids.includes("flat-pkg"), true);
+  assertEquals(ids.includes("nested-df"), true);
+});
+
+Deno.test("collectFromTree - child inherits parent dependencies", () => {
+  const app = new App();
+  const parent = new Command(app, "parent", { run: "echo", dependsOn: ["base"] });
+  new Package(parent, "child", { name: "child" });
+
+  const leaves = collectFromTree(app);
+  assertEquals(leaves.length, 1);
+  assertEquals(leaves[0].dependsOn.includes("base"), true);
+});
+
+Deno.test("collectFromTree - grandchild inherits ancestor dependencies", () => {
+  const app = new App();
+  const l1 = new Command(app, "l1", { run: "echo", dependsOn: ["root-dep"] });
+  const l2 = new Command(l1, "l2", { run: "echo", dependsOn: ["mid-dep"] });
+  new Package(l2, "leaf", { name: "leaf" });
+
+  const leaves = collectFromTree(app);
+  assertEquals(leaves.length, 1);
+  assertEquals(leaves[0].dependsOn.includes("root-dep"), true);
+  assertEquals(leaves[0].dependsOn.includes("mid-dep"), true);
+});
+
+Deno.test("collectFromTree - empty app returns empty list", () => {
+  const app = new App();
+  assertEquals(collectFromTree(app).length, 0);
+});
+
+// ============================================================
+// Property-Based Tests
+// ============================================================
+
+import fc from "fast-check";
+import { Resource } from "./resource.ts";
+
+// Helper: count leaf nodes in a scope tree
+function countLeaves(children: Resource[]): number {
+  let count = 0;
+  for (const child of children) {
+    if (child._children.length === 0) {
+      count++;
+    } else {
+      count += countLeaves(child._children);
+    }
+  }
+  return count;
+}
+
+// Helper: build a random scope tree under an App
+// Returns the total number of leaf nodes created
+function buildRandomTree(app: App, depth: number, childCount: number): number {
+  let leafCount = 0;
+  let idCounter = 0;
+
+  function addChildren(scope: Resource | App, remainingDepth: number, count: number): void {
+    for (let i = 0; i < count; i++) {
+      const id = `r-${idCounter++}`;
+      const resource = new Package(scope, id, { name: id });
+      if (remainingDepth > 0 && count > 0) {
+        // Make this a composite by adding children
+        const subCount = Math.max(1, Math.floor(count / 2));
+        addChildren(resource, remainingDepth - 1, subCount);
+      } else {
+        leafCount++;
+      }
+    }
+  }
+
+  addChildren(app, depth, childCount);
+  return leafCount;
+}
+
+// Feature: dacha-v2-redesign, Property 3: Scope tree collection completeness
+Deno.test("PBT: Scope tree collection completeness with random trees", () => {
+  fc.assert(
+    fc.property(
+      fc.integer({ min: 0, max: 3 }),
+      fc.integer({ min: 1, max: 5 }),
+      (depth, childCount) => {
+        const app = new App();
+        buildRandomTree(app, depth, childCount);
+
+        const leaves = collectFromTree(app);
+        const expectedCount = countLeaves(app._children);
+
+        // Every leaf collected exactly once
+        assertEquals(leaves.length, expectedCount);
+
+        // All collected resources are actually leaves
+        for (const leaf of leaves) {
+          assertEquals(leaf._children.length, 0);
+        }
+
+        // No duplicate ids
+        const ids = leaves.map((r) => r.id);
+        assertEquals(new Set(ids).size, ids.length);
+      },
+    ),
+    { numRuns: 100 },
+  );
+});
+
+// Feature: dacha-v2-redesign, Property 4: Child resources inherit parent dependencies
+Deno.test("PBT: Child resources inherit parent dependencies", () => {
+  const arbDep = fc.string({ minLength: 1, maxLength: 10 }).filter((s) => s.trim().length > 0);
+
+  fc.assert(
+    fc.property(
+      fc.array(arbDep, { minLength: 1, maxLength: 4 }),
+      fc.integer({ min: 1, max: 4 }),
+      (parentDeps, childCount) => {
+        const app = new App();
+        let idCounter = 0;
+
+        // Create a composite parent with dependencies
+        const parent = new Command(app, `parent-${idCounter++}`, { run: "echo", dependsOn: parentDeps });
+
+        // Add leaf children
+        for (let i = 0; i < childCount; i++) {
+          new Package(parent, `child-${idCounter++}`, { name: `child-${i}` });
+        }
+
+        const leaves = collectFromTree(app);
+
+        // Every leaf should have all parent deps
+        for (const leaf of leaves) {
+          for (const dep of parentDeps) {
+            assertEquals(leaf.dependsOn.includes(dep), true, `leaf ${leaf.id} missing dep ${dep}`);
+          }
+        }
+      },
+    ),
+    { numRuns: 100 },
+  );
 });

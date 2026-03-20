@@ -3,6 +3,7 @@
 import { join } from "@std/path";
 import { exec } from "../util/shell.ts";
 import { info, warn, error, debug } from "../util/log.ts";
+import { buildPermissionFlags, loadPermissions } from "../permissions.ts";
 
 const LABEL = "dev.dacha.sync";
 const PLIST_FILENAME = `${LABEL}.plist`;
@@ -22,9 +23,14 @@ function logPath(): string {
 /**
  * Generate the launchd plist XML content for the sync daemon.
  * @param dachaPath - Absolute path to the `dacha` binary.
+ * @param permissionFlags - Deno permission flags derived from the Permission_Store.
  */
-export function generateSyncPlist(dachaPath: string): string {
+export function generateSyncPlist(dachaPath: string, permissionFlags: string[] = []): string {
   const log = logPath();
+  const flagEntries = permissionFlags
+    .map((f) => `    <string>${f}</string>`)
+    .join("\n");
+  const flagsBlock = flagEntries ? `\n${flagEntries}` : "";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -33,7 +39,7 @@ export function generateSyncPlist(dachaPath: string): string {
   <string>${LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${dachaPath}</string>
+    <string>${dachaPath}</string>${flagsBlock}
     <string>sync</string>
     <string>run</string>
   </array>
@@ -63,7 +69,11 @@ export async function installSyncLaunchd(dachaPath: string): Promise<void> {
   const logsDir = join(Deno.env.get("HOME") ?? "~", "Library", "Logs");
   await Deno.mkdir(logsDir, { recursive: true });
 
-  const plist = generateSyncPlist(dachaPath);
+  // Derive permission flags from the Permission_Store
+  const store = await loadPermissions();
+  const flags = buildPermissionFlags(store);
+
+  const plist = generateSyncPlist(dachaPath, flags);
   await Deno.writeTextFile(dest, plist);
   info(`wrote plist to ${dest}`);
 
