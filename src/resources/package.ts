@@ -176,7 +176,7 @@ export class Package extends Resource {
     }
   }
 
-  protected toProps() {
+  protected toProps(): Record<string, unknown> & { id: string } {
     return {
       id: this.id,
       name: this.name,

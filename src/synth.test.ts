@@ -237,7 +237,7 @@ Deno.test("collectFromTree - empty app returns empty list", () => {
 // ============================================================
 
 import fc from "fast-check";
-import { Resource } from "./resource.ts";
+import type { Resource } from "./resource.ts";
 
 // Helper: count leaf nodes in a scope tree
 function countLeaves(children: Resource[]): number {

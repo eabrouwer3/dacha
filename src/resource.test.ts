@@ -1,6 +1,6 @@
 import { assertEquals, assertStrictEquals } from "@std/assert";
 import { App } from "./app.ts";
-import { Resource } from "./resource.ts";
+import type { Resource } from "./resource.ts";
 import { Package } from "./resources/package.ts";
 import { Dotfile } from "./resources/dotfile.ts";
 import { Command } from "./resources/command.ts";

@@ -10,7 +10,7 @@ import type {
   Platform,
   ResolvedState,
 } from "./types.ts";
-import { Resource } from "./resource.ts";
+import type { Resource } from "./resource.ts";
 import { Command } from "./resources/command.ts";
 import { debug, error, info, success, warn } from "./util/log.ts";
 
@@ -41,7 +41,7 @@ export async function apply(
 ): Promise<ApplyReport>;
 
 /** Implementation — dispatches based on first argument type. */
-export async function apply(
+export function apply(
   resourcesOrState: Resource[] | ResolvedState,
   platformOrOpts?: Platform | ApplyOpts,
   maybeOpts?: ApplyOpts,

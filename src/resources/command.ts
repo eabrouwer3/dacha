@@ -71,7 +71,7 @@ export class Command extends Resource {
     };
   }
 
-  protected toProps() {
+  protected toProps(): Record<string, unknown> & { id: string } {
     return {
       id: this.id,
       run: this.run,

@@ -1,6 +1,7 @@
 {
   "name": "@eabrouwer3/dacha",
   "version": "0.2.1",
+  "license": "MIT",
   "exports": {
     ".": "./src/mod.ts"
   },
@@ -16,6 +17,8 @@
   "tasks": {
     "dev": "deno run --watch --allow-all src/cli.ts",
     "test": "deno test --allow-all",
+    "lint": "deno lint",
+    "setup-hooks": "git config core.hooksPath .githooks",
     "compile": "deno compile --allow-read --allow-write --allow-env --allow-net --allow-run --allow-sys --output dacha src/cli.ts",
     "compile:darwin-arm64": "deno compile --allow-read --allow-write --allow-env --allow-net --allow-run --allow-sys --target aarch64-apple-darwin --output dacha-darwin-arm64 src/cli.ts",
     "compile:darwin-x64": "deno compile --allow-read --allow-write --allow-env --allow-net --allow-run --allow-sys --target x86_64-apple-darwin --output dacha-darwin-x64 src/cli.ts",

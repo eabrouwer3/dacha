@@ -13,7 +13,7 @@ import type {
   ResourceDef,
 } from "./types.ts";
 import { App } from "./app.ts";
-import { Resource } from "./resource.ts";
+import type { Resource } from "./resource.ts";
 import { detectPlatform, resolvePaths } from "./platform.ts";
 import { resolveProfile } from "./profile.ts";
 import { buildGraph } from "./graph.ts";

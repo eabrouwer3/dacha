@@ -86,7 +86,7 @@ export class Secret extends Resource {
     return { status: "applied" };
   }
 
-  protected toProps() {
+  protected toProps(): Record<string, unknown> & { id: string } {
     return {
       id: this.id,
       source: this.source,
