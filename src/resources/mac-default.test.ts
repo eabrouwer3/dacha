@@ -54,47 +54,48 @@ Deno.test("MacDefault toProps includes all fields", () => {
 // ============================================================
 
 const testDomain = "com.dacha.test-" + Date.now();
+const isDarwin = Deno.build.os === "darwin";
 
-Deno.test("MacDefault.check - returns false for unset key", async () => {
+Deno.test({ name: "MacDefault.check - returns false for unset key", ignore: !isDarwin, fn: async () => {
   const app = new Machine();
   const md = new MacDefault(app, "md", { domain: testDomain, key: "nonexistent", value: true });
   assertEquals(await md.check(platform()), false);
-});
+}});
 
-Deno.test("MacDefault.apply + check - boolean true", async () => {
+Deno.test({ name: "MacDefault.apply + check - boolean true", ignore: !isDarwin, fn: async () => {
   const key = "testBool" + Date.now();
   const app = new Machine();
   const md = new MacDefault(app, "md", { domain: testDomain, key, value: true });
   const result = await md.apply(platform(), new Map());
   assertEquals(result.status, "applied");
   assertEquals(await md.check(platform()), true);
-});
+}});
 
-Deno.test("MacDefault.apply + check - boolean false", async () => {
+Deno.test({ name: "MacDefault.apply + check - boolean false", ignore: !isDarwin, fn: async () => {
   const key = "testBoolFalse" + Date.now();
   const app = new Machine();
   const md = new MacDefault(app, "md", { domain: testDomain, key, value: false });
   await md.apply(platform(), new Map());
   assertEquals(await md.check(platform()), true);
-});
+}});
 
-Deno.test("MacDefault.apply + check - integer", async () => {
+Deno.test({ name: "MacDefault.apply + check - integer", ignore: !isDarwin, fn: async () => {
   const key = "testInt" + Date.now();
   const app = new Machine();
   const md = new MacDefault(app, "md", { domain: testDomain, key, value: 47 });
   await md.apply(platform(), new Map());
   assertEquals(await md.check(platform()), true);
-});
+}});
 
-Deno.test("MacDefault.apply + check - string", async () => {
+Deno.test({ name: "MacDefault.apply + check - string", ignore: !isDarwin, fn: async () => {
   const key = "testStr" + Date.now();
   const app = new Machine();
   const md = new MacDefault(app, "md", { domain: testDomain, key, value: "clmv" });
   await md.apply(platform(), new Map());
   assertEquals(await md.check(platform()), true);
-});
+}});
 
-Deno.test("MacDefault.check - returns false when value differs", async () => {
+Deno.test({ name: "MacDefault.check - returns false when value differs", ignore: !isDarwin, fn: async () => {
   const key = "testMismatch" + Date.now();
   const app = new Machine();
   // Write one value
@@ -103,12 +104,12 @@ Deno.test("MacDefault.check - returns false when value differs", async () => {
   // Check against a different value
   const md2 = new MacDefault(app, "md2", { domain: testDomain, key, value: 20 });
   assertEquals(await md2.check(platform()), false);
-});
+}});
 
-Deno.test("MacDefault.apply + check - float", async () => {
+Deno.test({ name: "MacDefault.apply + check - float", ignore: !isDarwin, fn: async () => {
   const key = "testFloat" + Date.now();
   const app = new Machine();
   const md = new MacDefault(app, "md", { domain: testDomain, key, value: 1.5 });
   await md.apply(platform(), new Map());
   assertEquals(await md.check(platform()), true);
-});
+}});
