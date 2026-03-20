@@ -10,7 +10,7 @@ import type {
 /** Resource array key names on a Profile. */
 const RESOURCE_KEYS = [
   "packages",
-  "dotfiles",
+  "files",
   "commands",
   "secrets",
 ] as const;
@@ -97,7 +97,7 @@ export function resolveProfile(profile: Profile): Profile {
   const merged = mergeProfiles(base, {
     name: profile.name,
     packages: profile.packages,
-    dotfiles: profile.dotfiles,
+    files: profile.files,
     commands: profile.commands,
     secrets: profile.secrets,
   });

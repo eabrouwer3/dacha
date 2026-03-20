@@ -2,7 +2,7 @@
 // Replaces the plain Resource interface + ResourceExecutor pattern with
 // a CDK-style class that embeds its own check/apply logic.
 
-import type { App } from "./app.ts";
+import type { Machine } from "./app.ts";
 import type { OutputStore, Platform, ResolvedResource, ResourceResult } from "./types.ts";
 
 export abstract class Resource {
@@ -12,9 +12,9 @@ export abstract class Resource {
   readonly _children: Resource[] = [];
   contributedBy?: string;
 
-  constructor(scope: Resource | App, id: string, props?: { dependsOn?: string[] }) {
+  constructor(scope: Resource | Machine, id: string, props?: { dependsOn?: Resource[] }) {
     this.id = id;
-    this.dependsOn = props?.dependsOn ?? [];
+    this.dependsOn = props?.dependsOn?.map((r) => r.id) ?? [];
     scope.addChild(this);
   }
 

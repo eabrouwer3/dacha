@@ -1,18 +1,26 @@
 // Library entry point — re-exports public classes, types, and key functions.
 
 // App root scope
-export { App } from "./app.ts";
+export { Machine } from "./app.ts";
 
 // Resource classes
 export { Resource } from "./resource.ts";
 export { Package } from "./resources/package.ts";
 export type { PackageProps } from "./resources/package.ts";
-export { Dotfile } from "./resources/dotfile.ts";
-export type { DotfileProps } from "./resources/dotfile.ts";
+export { BrewCaskPackage } from "./resources/brew-cask-package.ts";
+export type { BrewCaskPackageProps } from "./resources/brew-cask-package.ts";
+export { File } from "./resources/file.ts";
+export type { FileProps } from "./resources/file.ts";
+export { Directory } from "./resources/directory.ts";
+export type { DirectoryProps } from "./resources/directory.ts";
 export { Command } from "./resources/command.ts";
 export type { CommandProps } from "./resources/command.ts";
 export { Secret } from "./resources/secret.ts";
 export type { SecretProps } from "./resources/secret.ts";
+export { MacDefault } from "./resources/mac-default.ts";
+export type { MacDefaultProps, DefaultsValue } from "./resources/mac-default.ts";
+export { GitRepo } from "./resources/git-repo.ts";
+export type { GitRepoProps } from "./resources/git-repo.ts";
 
 // Types
 export type {

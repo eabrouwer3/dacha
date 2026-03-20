@@ -9,7 +9,7 @@ Deno.test("resolveProfile - profile with no extends returns own resources tagged
   const profile: Profile = {
     name: "standalone",
     packages: [{ id: "pkg-git", type: "package", name: "git" }],
-    dotfiles: [{ id: "df-vim", type: "dotfile", source: "vim/vimrc", destination: "~/.vimrc" }],
+    files: [{ id: "df-vim", type: "file", source: "vim/vimrc", destination: "~/.vimrc" }],
   };
 
   const resolved = resolveProfile(profile);
@@ -17,8 +17,8 @@ Deno.test("resolveProfile - profile with no extends returns own resources tagged
   assertEquals(resolved.packages?.length, 1);
   assertEquals(resolved.packages![0].name, "git");
   assertEquals(resolved.packages![0].contributedBy, "standalone");
-  assertEquals(resolved.dotfiles?.length, 1);
-  assertEquals(resolved.dotfiles![0].contributedBy, "standalone");
+  assertEquals(resolved.files?.length, 1);
+  assertEquals(resolved.files![0].contributedBy, "standalone");
 });
 
 // --- Single-level inheritance ---
@@ -146,7 +146,7 @@ Deno.test("resolveProfile - empty profile resolves cleanly", () => {
 
   assertEquals(resolved.name, "empty");
   assertEquals(resolved.packages, undefined);
-  assertEquals(resolved.dotfiles, undefined);
+  assertEquals(resolved.files, undefined);
   assertEquals(resolved.commands, undefined);
   assertEquals(resolved.secrets, undefined);
 });
@@ -157,7 +157,7 @@ Deno.test("resolveProfile - contributedBy is set to the final profile name for a
   const parent: Profile = {
     name: "base",
     packages: [{ id: "pkg-git", type: "package", name: "git" }],
-    dotfiles: [{ id: "df-vim", type: "dotfile", source: "vim/vimrc", destination: "~/.vimrc" }],
+    files: [{ id: "df-vim", type: "file", source: "vim/vimrc", destination: "~/.vimrc" }],
   };
   const child: Profile = {
     name: "my-machine",
@@ -170,7 +170,7 @@ Deno.test("resolveProfile - contributedBy is set to the final profile name for a
   for (const pkg of resolved.packages ?? []) {
     assertEquals(pkg.contributedBy, "my-machine");
   }
-  for (const df of resolved.dotfiles ?? []) {
+  for (const df of resolved.files ?? []) {
     assertEquals(df.contributedBy, "my-machine");
   }
   for (const cmd of resolved.commands ?? []) {

@@ -28,7 +28,7 @@ export interface Profile {
   name: string;
   extends?: Profile[];
   packages?: ResourceDef[];
-  dotfiles?: ResourceDef[];
+  files?: ResourceDef[];
   commands?: ResourceDef[];
   secrets?: ResourceDef[];
 }

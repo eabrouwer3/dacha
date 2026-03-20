@@ -1,7 +1,7 @@
 // Command resource — run shell commands with check/skip support.
 
 import { Resource } from "../resource.ts";
-import type { App } from "../app.ts";
+import type { Machine } from "../app.ts";
 import type { OutputStore, Platform, ResourceResult } from "../types.ts";
 import { exec } from "../util/shell.ts";
 import { debug, info } from "../util/log.ts";
@@ -11,7 +11,7 @@ export interface CommandProps {
   check?: string;
   critical?: boolean;
   captureOutput?: string;
-  dependsOn?: string[];
+  dependsOn?: Resource[];
 }
 
 export class Command extends Resource {
@@ -22,7 +22,7 @@ export class Command extends Resource {
   readonly critical?: boolean;
   readonly captureOutput?: string;
 
-  constructor(scope: Resource | App, id: string, props: CommandProps) {
+  constructor(scope: Resource | Machine, id: string, props: CommandProps) {
     super(scope, id, props);
     this.run = props.run;
     this.checkCmd = props.check;

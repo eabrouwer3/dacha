@@ -1,8 +1,8 @@
 import { assertEquals, assertStrictEquals } from "@std/assert";
-import { App } from "./app.ts";
+import { Machine } from "./app.ts";
 import type { Resource } from "./resource.ts";
 import { Package } from "./resources/package.ts";
-import { Dotfile } from "./resources/dotfile.ts";
+import { File } from "./resources/file.ts";
 import { Command } from "./resources/command.ts";
 import { Secret } from "./resources/secret.ts";
 
@@ -11,14 +11,14 @@ import { Secret } from "./resources/secret.ts";
 // ============================================================
 
 Deno.test("Resource registers as child of App scope", () => {
-  const app = new App();
+  const app = new Machine();
   const pkg = new Package(app, "git", { name: "git" });
   assertEquals(app._children.length, 1);
   assertStrictEquals(app._children[0], pkg);
 });
 
 Deno.test("Resource registers as child of another Resource scope", () => {
-  const app = new App();
+  const app = new Machine();
   const parent = new Command(app, "parent", { run: "echo hi" });
   const child = new Package(parent, "child-pkg", { name: "child" });
   assertEquals(parent._children.length, 1);
@@ -28,8 +28,9 @@ Deno.test("Resource registers as child of another Resource scope", () => {
 });
 
 Deno.test("id and dependsOn are set correctly from props", () => {
-  const app = new App();
-  const pkg = new Package(app, "curl", { name: "curl", dependsOn: ["git"] });
+  const app = new Machine();
+  const git = new Package(app, "git", { name: "git" });
+  const pkg = new Package(app, "curl", { name: "curl", dependsOn: [git] });
   assertEquals(pkg.id, "curl");
   assertEquals(pkg.dependsOn, ["git"]);
 });
@@ -39,8 +40,9 @@ Deno.test("id and dependsOn are set correctly from props", () => {
 // ============================================================
 
 Deno.test("Package toResolved returns correct structure", () => {
-  const app = new App();
-  const pkg = new Package(app, "git", { name: "git", brew: "git-brew", dependsOn: ["base"] });
+  const app = new Machine();
+  const base = new Package(app, "base", { name: "base" });
+  const pkg = new Package(app, "git", { name: "git", brew: "git-brew", dependsOn: [base] });
   const resolved = pkg.toResolved();
 
   assertEquals(resolved.id, "git");
@@ -51,9 +53,9 @@ Deno.test("Package toResolved returns correct structure", () => {
   assertEquals(resolved.action.brew, "git-brew");
 });
 
-Deno.test("Dotfile toResolved returns correct structure", () => {
-  const app = new App();
-  const df = new Dotfile(app, "gitconfig", {
+Deno.test("File toResolved returns correct structure", () => {
+  const app = new Machine();
+  const df = new File(app, "gitconfig", {
     source: "./gitconfig",
     destination: "~/.gitconfig",
     template: true,
@@ -61,7 +63,7 @@ Deno.test("Dotfile toResolved returns correct structure", () => {
   const resolved = df.toResolved();
 
   assertEquals(resolved.id, "gitconfig");
-  assertEquals(resolved.type, "dotfile");
+  assertEquals(resolved.type, "file");
   assertEquals(resolved.dependsOn, []);
   assertEquals(resolved.action.source, "./gitconfig");
   assertEquals(resolved.action.destination, "~/.gitconfig");
@@ -69,7 +71,7 @@ Deno.test("Dotfile toResolved returns correct structure", () => {
 });
 
 Deno.test("Command toResolved returns correct structure", () => {
-  const app = new App();
+  const app = new Machine();
   const cmd = new Command(app, "setup", { run: "echo setup", check: "true", critical: true });
   const resolved = cmd.toResolved();
 
@@ -81,7 +83,7 @@ Deno.test("Command toResolved returns correct structure", () => {
 });
 
 Deno.test("Secret toResolved returns correct structure", () => {
-  const app = new App();
+  const app = new Machine();
   const sec = new Secret(app, "key", {
     source: "secrets/key.age",
     destination: "~/.ssh/key",
@@ -97,7 +99,7 @@ Deno.test("Secret toResolved returns correct structure", () => {
 });
 
 Deno.test("toResolved uses contributedBy when set", () => {
-  const app = new App();
+  const app = new Machine();
   const pkg = new Package(app, "git", { name: "git" });
   pkg.contributedBy = "base-profile";
   const resolved = pkg.toResolved();
@@ -106,7 +108,7 @@ Deno.test("toResolved uses contributedBy when set", () => {
 
 Deno.test("toResolved type comes from static resourceType", () => {
   assertEquals(Package.resourceType, "package");
-  assertEquals(Dotfile.resourceType, "dotfile");
+  assertEquals(File.resourceType, "file");
   assertEquals(Command.resourceType, "command");
   assertEquals(Secret.resourceType, "secret");
 });
@@ -116,22 +118,22 @@ Deno.test("toResolved type comes from static resourceType", () => {
 // ============================================================
 
 Deno.test("dependsOn defaults to empty array when not provided", () => {
-  const app = new App();
+  const app = new Machine();
   const pkg = new Package(app, "git", { name: "git" });
   assertEquals(pkg.dependsOn, []);
   assertEquals(pkg.toResolved().dependsOn, []);
 });
 
 Deno.test("empty dependsOn array is preserved", () => {
-  const app = new App();
+  const app = new Machine();
   const pkg = new Package(app, "git", { name: "git", dependsOn: [] });
   assertEquals(pkg.dependsOn, []);
 });
 
 Deno.test("multiple children registered to same App parent", () => {
-  const app = new App();
+  const app = new Machine();
   const a = new Package(app, "a", { name: "a" });
-  const b = new Dotfile(app, "b", { source: "s", destination: "d" });
+  const b = new File(app, "b", { source: "s", destination: "d" });
   const c = new Command(app, "c", { run: "echo" });
   assertEquals(app._children.length, 3);
   assertStrictEquals(app._children[0], a);
@@ -140,7 +142,7 @@ Deno.test("multiple children registered to same App parent", () => {
 });
 
 Deno.test("multiple children registered to same Resource parent", () => {
-  const app = new App();
+  const app = new Machine();
   const parent = new Command(app, "parent", { run: "echo" });
   const c1 = new Package(parent, "c1", { name: "c1" });
   const c2 = new Package(parent, "c2", { name: "c2" });
@@ -149,15 +151,15 @@ Deno.test("multiple children registered to same Resource parent", () => {
   assertStrictEquals(parent._children[1], c2);
 });
 
-Deno.test("optional Dotfile fields default correctly", () => {
-  const app = new App();
-  const df = new Dotfile(app, "df", { source: "s", destination: "d" });
+Deno.test("optional File fields default correctly", () => {
+  const app = new Machine();
+  const df = new File(app, "df", { source: "s", destination: "d" });
   assertEquals(df.template, undefined);
   assertEquals(df.dependsOn, []);
 });
 
 Deno.test("optional Command fields default correctly", () => {
-  const app = new App();
+  const app = new Machine();
   const cmd = new Command(app, "cmd", { run: "echo" });
   assertEquals(cmd.checkCmd, undefined);
   assertEquals(cmd.critical, undefined);
@@ -166,17 +168,16 @@ Deno.test("optional Command fields default correctly", () => {
 });
 
 Deno.test("optional Secret fields default correctly", () => {
-  const app = new App();
+  const app = new Machine();
   const sec = new Secret(app, "sec", { source: "s", destination: "d" });
   assertEquals(sec.permissions, undefined);
   assertEquals(sec.dependsOn, []);
 });
 
 Deno.test("optional Package fields default correctly", () => {
-  const app = new App();
+  const app = new Machine();
   const pkg = new Package(app, "pkg", { name: "pkg" });
   assertEquals(pkg.brew, undefined);
-  assertEquals(pkg.brewCask, undefined);
   assertEquals(pkg.apt, undefined);
   assertEquals(pkg.yum, undefined);
   assertEquals(pkg.dependsOn, []);
@@ -191,8 +192,17 @@ import fc from "fast-check";
 // --- Arbitraries ---
 
 const arbId = fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim().length > 0);
-const arbDepList = fc.array(arbId, { maxLength: 5 });
 const arbOptStr = fc.option(fc.string({ minLength: 1, maxLength: 30 }), { nil: undefined });
+
+/** Create N stub Package resources under a fresh App, returning them as a dep list. */
+function makeDeps(count: number): { app: Machine; deps: Package[] } {
+  const app = new Machine();
+  const deps: Package[] = [];
+  for (let i = 0; i < count; i++) {
+    deps.push(new Package(app, `dep-${i}`, { name: `dep-${i}` }));
+  }
+  return { app, deps };
+}
 
 // Feature: dacha-v2-redesign, Property 1: Resource constructor round-trip
 Deno.test("PBT: Resource constructor round-trip for all L1 types", () => {
@@ -204,18 +214,16 @@ Deno.test("PBT: Resource constructor round-trip for all L1 types", () => {
       arbOptStr,
       arbOptStr,
       arbOptStr,
-      arbOptStr,
-      arbDepList,
-      (id, name, brew, brewCask, apt, yum, deps) => {
-        const app = new App();
-        const pkg = new Package(app, id, { name, brew, brewCask, apt, yum, dependsOn: deps });
+      fc.integer({ min: 0, max: 5 }),
+      (id, name, brew, apt, yum, depCount) => {
+        const { app, deps } = makeDeps(depCount);
+        const pkg = new Package(app, id, { name, brew, apt, yum, dependsOn: deps });
         assertEquals(pkg.id, id);
         assertEquals(pkg.name, name);
         assertEquals(pkg.brew, brew);
-        assertEquals(pkg.brewCask, brewCask);
         assertEquals(pkg.apt, apt);
         assertEquals(pkg.yum, yum);
-        assertEquals(pkg.dependsOn, deps);
+        assertEquals(pkg.dependsOn, deps.map((d) => d.id));
         assertStrictEquals(app._children[app._children.length - 1], pkg);
         assertEquals(typeof pkg.check, "function");
         assertEquals(typeof pkg.apply, "function");
@@ -224,22 +232,22 @@ Deno.test("PBT: Resource constructor round-trip for all L1 types", () => {
     { numRuns: 100 },
   );
 
-  // Dotfile round-trip
+  // File round-trip
   fc.assert(
     fc.property(
       arbId,
       fc.string({ minLength: 1, maxLength: 30 }),
       fc.string({ minLength: 1, maxLength: 30 }),
       fc.option(fc.boolean(), { nil: undefined }),
-      arbDepList,
-      (id, source, destination, template, deps) => {
-        const app = new App();
-        const df = new Dotfile(app, id, { source, destination, template, dependsOn: deps });
+      fc.integer({ min: 0, max: 5 }),
+      (id, source, destination, template, depCount) => {
+        const { app, deps } = makeDeps(depCount);
+        const df = new File(app, id, { source, destination, template, dependsOn: deps });
         assertEquals(df.id, id);
         assertEquals(df.source, source);
         assertEquals(df.destination, destination);
         assertEquals(df.template, template);
-        assertEquals(df.dependsOn, deps);
+        assertEquals(df.dependsOn, deps.map((d) => d.id));
         assertStrictEquals(app._children[app._children.length - 1], df);
       },
     ),
@@ -254,16 +262,16 @@ Deno.test("PBT: Resource constructor round-trip for all L1 types", () => {
       arbOptStr,
       fc.option(fc.boolean(), { nil: undefined }),
       arbOptStr,
-      arbDepList,
-      (id, run, check, critical, captureOutput, deps) => {
-        const app = new App();
+      fc.integer({ min: 0, max: 5 }),
+      (id, run, check, critical, captureOutput, depCount) => {
+        const { app, deps } = makeDeps(depCount);
         const cmd = new Command(app, id, { run, check, critical, captureOutput, dependsOn: deps });
         assertEquals(cmd.id, id);
         assertEquals(cmd.run, run);
         assertEquals(cmd.checkCmd, check);
         assertEquals(cmd.critical, critical);
         assertEquals(cmd.captureOutput, captureOutput);
-        assertEquals(cmd.dependsOn, deps);
+        assertEquals(cmd.dependsOn, deps.map((d) => d.id));
         assertStrictEquals(app._children[app._children.length - 1], cmd);
       },
     ),
@@ -277,15 +285,15 @@ Deno.test("PBT: Resource constructor round-trip for all L1 types", () => {
       fc.string({ minLength: 1, maxLength: 30 }),
       fc.string({ minLength: 1, maxLength: 30 }),
       arbOptStr,
-      arbDepList,
-      (id, source, destination, permissions, deps) => {
-        const app = new App();
+      fc.integer({ min: 0, max: 5 }),
+      (id, source, destination, permissions, depCount) => {
+        const { app, deps } = makeDeps(depCount);
         const sec = new Secret(app, id, { source, destination, permissions, dependsOn: deps });
         assertEquals(sec.id, id);
         assertEquals(sec.source, source);
         assertEquals(sec.destination, destination);
         assertEquals(sec.permissions, permissions);
-        assertEquals(sec.dependsOn, deps);
+        assertEquals(sec.dependsOn, deps.map((d) => d.id));
         assertStrictEquals(app._children[app._children.length - 1], sec);
       },
     ),
@@ -297,27 +305,27 @@ Deno.test("PBT: Resource constructor round-trip for all L1 types", () => {
 Deno.test("PBT: toResolved serialization preserves identity", () => {
   // Package
   fc.assert(
-    fc.property(arbId, fc.string({ minLength: 1, maxLength: 20 }), arbDepList, (id, name, deps) => {
-      const app = new App();
+    fc.property(arbId, fc.string({ minLength: 1, maxLength: 20 }), fc.integer({ min: 0, max: 5 }), (id, name, depCount) => {
+      const { app, deps } = makeDeps(depCount);
       const pkg = new Package(app, id, { name, dependsOn: deps });
       const resolved = pkg.toResolved();
       assertEquals(resolved.id, id);
       assertEquals(resolved.type, "package");
-      assertEquals(resolved.dependsOn, deps);
+      assertEquals(resolved.dependsOn, deps.map((d) => d.id));
       assertEquals(resolved.action.name, name);
     }),
     { numRuns: 100 },
   );
 
-  // Dotfile
+  // File
   fc.assert(
-    fc.property(arbId, fc.string({ minLength: 1 }), fc.string({ minLength: 1 }), arbDepList, (id, src, dest, deps) => {
-      const app = new App();
-      const df = new Dotfile(app, id, { source: src, destination: dest, dependsOn: deps });
+    fc.property(arbId, fc.string({ minLength: 1 }), fc.string({ minLength: 1 }), fc.integer({ min: 0, max: 5 }), (id, src, dest, depCount) => {
+      const { app, deps } = makeDeps(depCount);
+      const df = new File(app, id, { source: src, destination: dest, dependsOn: deps });
       const resolved = df.toResolved();
       assertEquals(resolved.id, id);
-      assertEquals(resolved.type, "dotfile");
-      assertEquals(resolved.dependsOn, deps);
+      assertEquals(resolved.type, "file");
+      assertEquals(resolved.dependsOn, deps.map((d) => d.id));
       assertEquals(resolved.action.source, src);
       assertEquals(resolved.action.destination, dest);
     }),
@@ -326,13 +334,13 @@ Deno.test("PBT: toResolved serialization preserves identity", () => {
 
   // Command
   fc.assert(
-    fc.property(arbId, fc.string({ minLength: 1 }), arbDepList, (id, run, deps) => {
-      const app = new App();
+    fc.property(arbId, fc.string({ minLength: 1 }), fc.integer({ min: 0, max: 5 }), (id, run, depCount) => {
+      const { app, deps } = makeDeps(depCount);
       const cmd = new Command(app, id, { run, dependsOn: deps });
       const resolved = cmd.toResolved();
       assertEquals(resolved.id, id);
       assertEquals(resolved.type, "command");
-      assertEquals(resolved.dependsOn, deps);
+      assertEquals(resolved.dependsOn, deps.map((d) => d.id));
       assertEquals(resolved.action.run, run);
     }),
     { numRuns: 100 },
@@ -340,13 +348,13 @@ Deno.test("PBT: toResolved serialization preserves identity", () => {
 
   // Secret
   fc.assert(
-    fc.property(arbId, fc.string({ minLength: 1 }), fc.string({ minLength: 1 }), arbDepList, (id, src, dest, deps) => {
-      const app = new App();
+    fc.property(arbId, fc.string({ minLength: 1 }), fc.string({ minLength: 1 }), fc.integer({ min: 0, max: 5 }), (id, src, dest, depCount) => {
+      const { app, deps } = makeDeps(depCount);
       const sec = new Secret(app, id, { source: src, destination: dest, dependsOn: deps });
       const resolved = sec.toResolved();
       assertEquals(resolved.id, id);
       assertEquals(resolved.type, "secret");
-      assertEquals(resolved.dependsOn, deps);
+      assertEquals(resolved.dependsOn, deps.map((d) => d.id));
       assertEquals(resolved.action.source, src);
       assertEquals(resolved.action.destination, dest);
     }),
@@ -361,7 +369,7 @@ Deno.test("PBT: Scope auto-registration", () => {
       fc.integer({ min: 1, max: 5 }),
       fc.integer({ min: 0, max: 3 }),
       (topCount, childPerTop) => {
-        const app = new App();
+        const app = new Machine();
         const topResources: Package[] = [];
 
         // Create top-level resources under App

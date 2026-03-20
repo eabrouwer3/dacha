@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { apply } from "./apply.ts";
-import { App } from "./app.ts";
+import { Machine } from "./app.ts";
 import { Command } from "./resources/command.ts";
 import type { Platform } from "./types.ts";
 
@@ -14,9 +14,9 @@ const testPlatform: Platform = {
 
 /** Create a Command resource attached to a fresh App scope. */
 function cmd(
-  app: App,
+  app: Machine,
   id: string,
-  overrides: { run?: string; check?: string; critical?: boolean; dependsOn?: string[] } = {},
+  overrides: { run?: string; check?: string; critical?: boolean; dependsOn?: Command[] } = {},
 ): Command {
   return new Command(app, id, {
     run: overrides.run ?? "echo ok",
@@ -30,7 +30,7 @@ function cmd(
 
 Deno.test("apply dry-run - does not execute commands (no side effects)", async () => {
   const marker = `/tmp/dacha-apply-dryrun-${Date.now()}`;
-  const app = new App();
+  const app = new Machine();
   const resources = [cmd(app, "cmd-touch", { run: `touch ${marker}` })];
 
   const report = await apply(resources, testPlatform, { dryRun: true });
@@ -51,10 +51,11 @@ Deno.test("apply dry-run - does not execute commands (no side effects)", async (
 // --- Dependent-skip on failure ---
 
 Deno.test("apply - dependent resources are skipped when a dependency fails", async () => {
-  const app = new App();
+  const app = new Machine();
+  const fail = cmd(app, "cmd-fail", { run: "false" });
   const resources = [
-    cmd(app, "cmd-fail", { run: "false" }),
-    cmd(app, "cmd-child", { run: "echo child", dependsOn: ["cmd-fail"] }),
+    fail,
+    cmd(app, "cmd-child", { run: "echo child", dependsOn: [fail] }),
   ];
 
   const report = await apply(resources, testPlatform);
@@ -65,11 +66,13 @@ Deno.test("apply - dependent resources are skipped when a dependency fails", asy
 });
 
 Deno.test("apply - transitive dependents are also skipped", async () => {
-  const app = new App();
+  const app = new Machine();
+  const fail = cmd(app, "cmd-fail", { run: "false" });
+  const mid = cmd(app, "cmd-mid", { run: "echo mid", dependsOn: [fail] });
   const resources = [
-    cmd(app, "cmd-fail", { run: "false" }),
-    cmd(app, "cmd-mid", { run: "echo mid", dependsOn: ["cmd-fail"] }),
-    cmd(app, "cmd-leaf", { run: "echo leaf", dependsOn: ["cmd-mid"] }),
+    fail,
+    mid,
+    cmd(app, "cmd-leaf", { run: "echo leaf", dependsOn: [mid] }),
   ];
 
   const report = await apply(resources, testPlatform);
@@ -82,12 +85,13 @@ Deno.test("apply - transitive dependents are also skipped", async () => {
 // --- Summary report accuracy ---
 
 Deno.test("apply - summary counts are accurate", async () => {
-  const app = new App();
+  const app = new Machine();
+  const fail = cmd(app, "cmd-fail", { run: "false" });
   const resources = [
     cmd(app, "cmd-ok", { run: "echo ok" }),
     cmd(app, "cmd-done", { run: "echo done", check: "true" }),
-    cmd(app, "cmd-fail", { run: "false" }),
-    cmd(app, "cmd-dep", { run: "echo dep", dependsOn: ["cmd-fail"] }),
+    fail,
+    cmd(app, "cmd-dep", { run: "echo dep", dependsOn: [fail] }),
   ];
 
   const report = await apply(resources, testPlatform);
@@ -102,7 +106,7 @@ Deno.test("apply - summary counts are accurate", async () => {
 // --- Already-done resources are skipped ---
 
 Deno.test("apply - resource with check=true is skipped as already done", async () => {
-  const app = new App();
+  const app = new Machine();
   const resources = [
     cmd(app, "cmd-done", { run: "echo should-not-run", check: "true" }),
   ];

@@ -37,61 +37,106 @@ dacha apply
 
 ## Configuration
 
-Your dotfiles repo contains a `dacha.config.ts` that builds a resource tree using the `App` scope and resource classes:
+Your dotfiles repo contains a `dacha.config.ts` that exports a `Machine` instance. The recommended pattern is to subclass `Machine` and define all your resources in the constructor — similar to how you'd extend a `Stack` in CDK:
 
 ```ts
-import { App, Package, Dotfile, Command, Secret } from "@eabrouwer3/dacha";
+import { Machine, Package, File, Command, Secret } from "@eabrouwer3/dacha";
 
-const app = new App();
+class MyMachine extends Machine {
+  constructor() {
+    super();
 
-// Packages auto-register with the app scope
-new Package(app, "git", { name: "git" });
-new Package(app, "ripgrep", { name: "ripgrep", brew: "ripgrep", apt: "ripgrep" });
-new Package(app, "fish", { name: "fish" });
+    new Package(this, "git", { name: "git" });
+    new Package(this, "ripgrep", { name: "ripgrep", brew: "ripgrep", apt: "ripgrep" });
+    new Package(this, "fish", { name: "fish" });
 
-// Dotfiles with template interpolation
-new Dotfile(app, "gitconfig", {
-  source: "./config/gitconfig",
-  destination: "~/.gitconfig",
-  template: true,
-});
+    new File(this, "gitconfig", {
+      source: "./config/gitconfig",
+      destination: "~/.gitconfig",
+      template: true,
+    });
 
-// Commands with idempotency checks
-new Command(app, "install-rust", {
-  run: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
-  check: "command -v rustc",
-});
+    new Command(this, "install-rust", {
+      run: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
+      check: "command -v rustc",
+    });
 
-// Secrets decrypted via age
-new Secret(app, "ssh-key", {
-  source: "./secrets/id_ed25519.age",
-  destination: "~/.ssh/id_ed25519",
-  permissions: "0600",
-});
+    new Secret(this, "ssh-key", {
+      source: "./secrets/id_ed25519.age",
+      destination: "~/.ssh/id_ed25519",
+      permissions: "0600",
+    });
+  }
+}
 
-export default app;
+export default new MyMachine();
+```
+
+You can also use `Machine` directly without subclassing:
+
+```ts
+const machine = new Machine();
+new Package(machine, "git", { name: "git" });
+export default machine;
 ```
 
 ### Scope tree
 
-Resources register themselves with a parent scope when constructed. The first argument to any resource constructor is its scope — either the `App` root or another `Resource`. This lets you compose logical groups:
+Resources register themselves with a parent scope when constructed. The first argument to any resource constructor is its scope — either the `Machine` root or another `Resource`. This lets you compose logical groups:
 
 ```ts
-const app = new App();
+class MyMachine extends Machine {
+  constructor() {
+    super();
 
-// A parent resource that groups related children
-const devTools = new Command(app, "dev-tools", {
-  run: "echo 'dev tools ready'",
-  check: "true",
-});
+    // A parent resource that groups related children
+    const devTools = new Command(this, "dev-tools", {
+      run: "echo 'dev tools ready'",
+      check: "true",
+    });
 
-// Children register under devTools instead of app directly
-new Package(devTools, "neovim", { name: "neovim" });
-new Package(devTools, "tmux", { name: "tmux" });
+    // Children register under devTools instead of the machine directly
+    new Package(devTools, "neovim", { name: "neovim" });
+    new Package(devTools, "tmux", { name: "tmux" });
+  }
+}
 ```
 
 When dacha collects resources, it walks the tree and gathers all leaf nodes for execution.
 
+### Parameters
+
+Parameters let you prompt for values on first run and reuse them on subsequent runs. Define them as a static `params` array on your `Machine` subclass, then export a factory function that receives the resolved values:
+
+```ts
+import { Machine, Package, type Params, type ParamDefinition } from "@eabrouwer3/dacha";
+
+class WorkMachine extends Machine {
+  static params: ParamDefinition[] = [
+    { name: "hostname", message: "What should this machine be called?", type: "text", default: "work-laptop" },
+    { name: "install_games", message: "Install games?", type: "confirm", default: false },
+  ];
+
+  constructor(params: Params) {
+    super();
+
+    new Package(this, "git", { name: "git" });
+
+    if (params.install_games) {
+      new Package(this, "steam", { name: "steam" });
+    }
+
+    new Command(this, "set-hostname", {
+      run: `sudo scutil --set ComputerName "${params.hostname}"`,
+      check: `test "$(scutil --get ComputerName)" = "${params.hostname}"`,
+    });
+  }
+}
+
+export default ({ params }: { params: Params }) => new WorkMachine(params);
+```
+
+On first run, dacha prompts for each parameter and saves the answers to `~/.config/dacha/params.lock.json`. Subsequent runs reuse the saved values. Use `dacha params reset` to re-prompt.
 ## Resources
 
 ### Package
@@ -99,29 +144,39 @@ When dacha collects resources, it walks the tree and gathers all leaf nodes for 
 Install system packages via the detected package manager (brew, apt, dnf, yum). On macOS, Homebrew is auto-installed if missing.
 
 ```ts
-new Package(app, "ripgrep", {
+new Package(this, "ripgrep", {
   name: "ripgrep",
   brew: "ripgrep",       // override for brew
   apt: "ripgrep",        // override for apt
   yum: "ripgrep",        // override for yum
 });
 
-// Cask packages
-new Package(app, "firefox", {
-  name: "firefox",
-  brewCask: "firefox",
-});
+// macOS GUI apps via brew cask
+new BrewCaskPackage(this, "firefox", { name: "firefox" });
 ```
 
-### Dotfile
+### File
 
-Copy or template files to their destination. Templates support `{{output.resourceId.key}}` interpolation from upstream resource outputs.
+Copy files or directories to their destination. Templates support `{{output.resourceId.key}}` interpolation from upstream resource outputs. Can also create empty directories.
 
 ```ts
-new Dotfile(app, "gitconfig", {
+// Copy a single file with template interpolation
+new File(this, "gitconfig", {
   source: "./config/gitconfig",
   destination: "~/.gitconfig",
   template: true,          // enable interpolation
+});
+
+// Copy an entire directory
+new File(this, "nvim-config", {
+  source: "./config/nvim",
+  destination: "~/.config/nvim",
+});
+
+// Create an empty directory
+new File(this, "cache-dir", {
+  destination: "~/.cache/myapp",
+  directory: true,
 });
 ```
 
@@ -130,7 +185,7 @@ new Dotfile(app, "gitconfig", {
 Run shell commands with optional idempotency checks. If `check` exits 0, the command is skipped. Commands can capture output for downstream use and be marked `critical` to halt the entire apply on failure.
 
 ```ts
-new Command(app, "install-rust", {
+new Command(this, "install-rust", {
   run: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
   check: "command -v rustc",
   critical: true,
@@ -143,10 +198,22 @@ new Command(app, "install-rust", {
 Decrypt [age](https://github.com/FiloSottile/age)-encrypted files and place them with specific permissions.
 
 ```ts
-new Secret(app, "ssh-key", {
+new Secret(this, "ssh-key", {
   source: "./secrets/id_ed25519.age",
   destination: "~/.ssh/id_ed25519",
   permissions: "0600",
+});
+```
+
+### MacDefault
+
+Set macOS `defaults` preferences. The type flag (`-bool`, `-int`, `-string`) is inferred from the value.
+
+```ts
+new MacDefault(this, "dock-autohide", {
+  domain: "com.apple.dock",
+  key: "autohide",
+  value: true,
 });
 ```
 
@@ -155,10 +222,15 @@ new Secret(app, "ssh-key", {
 Resources can declare explicit dependencies via `dependsOn`. Implicit dependencies are also detected from `{{output.resourceId.key}}` template references. dacha builds a DAG, detects cycles, and applies resources in topological order.
 
 ```ts
-new Command(app, "setup-rust", {
+const rust = new Command(this, "install-rust", {
+  run: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
+  check: "command -v rustc",
+});
+
+new Command(this, "setup-rust", {
   run: "rustup default stable",
   check: "rustup show | grep stable",
-  dependsOn: ["install-rust"],
+  dependsOn: [rust],
 });
 ```
 
@@ -167,12 +239,12 @@ new Command(app, "setup-rust", {
 dacha is published on JSR as `@eabrouwer3/dacha`. You can import and use it programmatically:
 
 ```ts
-import { App, Package, synth, apply } from "@eabrouwer3/dacha";
+import { Machine, Package, synth, apply } from "@eabrouwer3/dacha";
 
-const app = new App();
-new Package(app, "git", { name: "git" });
+const machine = new Machine();
+new Package(machine, "git", { name: "git" });
 
-const state = await synth(app);
+const state = await synth(machine);
 await apply(state);
 ```
 

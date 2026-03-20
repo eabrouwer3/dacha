@@ -2,17 +2,18 @@
 // Also provides encrypt() and edit() helpers for the CLI.
 
 import { Resource } from "../resource.ts";
-import type { App } from "../app.ts";
+import type { Machine } from "../app.ts";
 import type { OutputStore, Platform, ResourceResult } from "../types.ts";
 import { exec } from "../util/shell.ts";
 import { debug, info } from "../util/log.ts";
 import { dirname } from "@std/path";
+import { ensureBrew } from "./package.ts";
 
 export interface SecretProps {
   source: string;
   destination: string;
   permissions?: string;
-  dependsOn?: string[];
+  dependsOn?: Resource[];
 }
 
 /** Resolve `~` prefix to the user's home directory. */
@@ -29,7 +30,28 @@ function identityPath(): string {
   const fromEnv = Deno.env.get("DACHA_AGE_IDENTITY");
   if (fromEnv) return resolveHome(fromEnv);
   const home = Deno.env.get("HOME") ?? "/tmp";
-  return `${home}/.config/age/identity.txt`;
+  return `${home}/.ssh/id_rsa`;
+}
+
+/** Ensure the `age` binary is available, installing via brew on macOS if needed. */
+async function ensureAge(): Promise<void> {
+  const check = await exec("command -v age");
+  if (check.code === 0) return;
+
+  if (Deno.build.os === "darwin") {
+    info("age not found — installing via brew…");
+    await ensureBrew();
+    const install = await exec("brew install age");
+    if (install.code !== 0) {
+      throw new Error(
+        `Failed to install age via brew: ${install.stderr.trim() || `exit code ${install.code}`}`,
+      );
+    }
+  } else {
+    throw new Error(
+      "age is not installed. Please install it manually before running dacha.",
+    );
+  }
 }
 
 export class Secret extends Resource {
@@ -39,7 +61,7 @@ export class Secret extends Resource {
   readonly destination: string;
   readonly permissions?: string;
 
-  constructor(scope: Resource | App, id: string, props: SecretProps) {
+  constructor(scope: Resource | Machine, id: string, props: SecretProps) {
     super(scope, id, props);
     this.source = props.source;
     this.destination = props.destination;
@@ -59,6 +81,8 @@ export class Secret extends Resource {
   }
 
   async apply(_platform: Platform, _outputs: OutputStore): Promise<ResourceResult> {
+    await ensureAge();
+
     const dest = resolveHome(this.destination);
     const identity = identityPath();
     const permissions = this.permissions ?? "0600";

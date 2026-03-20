@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { App } from "../app.ts";
+import { Machine } from "../app.ts";
 import { Package } from "./package.ts";
 import type { Platform } from "../types.ts";
 import fc from "fast-check";
@@ -57,7 +57,7 @@ Deno.test("PBT: Brew verified flag is shared across Package instances", () => {
       fc.array(fc.string({ minLength: 1, maxLength: 10 }), { minLength: 1, maxLength: 5 }),
       (names) => {
         Package._brewVerified = false;
-        const app = new App();
+        const app = new Machine();
         const packages = names.map((n, i) => new Package(app, `pkg-${i}`, { name: n }));
 
         // Set flag via static field

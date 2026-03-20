@@ -1,6 +1,6 @@
 // Synthesizer — evaluates a dacha config into a fully resolved state JSON.
 // Supports two paths:
-//   1. NEW (v2): Config returns an App → walk scope tree via collectFromTree
+//   1. NEW (v2): Config returns a Machine → walk scope tree via collectFromTree
 //   2. LEGACY: Config returns a DachaConfig with profiles → profile resolution
 
 import type {
@@ -12,7 +12,7 @@ import type {
   ResolvedState,
   ResourceDef,
 } from "./types.ts";
-import { App } from "./app.ts";
+import { Machine } from "./app.ts";
 import type { Resource } from "./resource.ts";
 import { detectPlatform, resolvePaths } from "./platform.ts";
 import { resolveProfile } from "./profile.ts";
@@ -65,7 +65,7 @@ function collectProfileChain(
  * Leaf resources are those with no children.
  * Child resources inherit parent dependencies.
  */
-export function collectFromTree(app: App): Resource[] {
+export function collectFromTree(app: Machine): Resource[] {
   const leaves: Resource[] = [];
 
   function walk(children: Resource[], parentDeps: string[]): void {
@@ -90,24 +90,24 @@ export function collectFromTree(app: App): Resource[] {
 }
 
 /**
- * Synthesize a resolved state from a dacha config or App instance.
+ * Synthesize a resolved state from a dacha config or Machine instance.
  *
  * Accepts:
- *   - An App instance directly (v2 scope tree path)
- *   - A file path to dynamically import (may return App or DachaConfig)
+ *   - A Machine instance directly (v2 scope tree path)
+ *   - A file path to dynamically import (may return Machine or DachaConfig)
  *   - A DachaConfig object directly (legacy profile path)
  */
 export async function synth(
-  configOrPath: string | DachaConfig | App,
+  configOrPath: string | DachaConfig | Machine,
   opts?: SynthOpts,
 ): Promise<ResolvedState> {
   const platform = detectPlatform();
   const paths = resolvePaths();
   info(`detected platform: ${platform.os}/${platform.arch}`);
 
-  // --- App instance: v2 scope tree path ---
-  if (configOrPath instanceof App) {
-    return synthFromApp(configOrPath, platform);
+  // --- Machine instance: v2 scope tree path ---
+  if (configOrPath instanceof Machine) {
+    return synthFromMachine(configOrPath, platform, {});
   }
 
   // --- String path: dynamic import, may return App or DachaConfig ---
@@ -121,9 +121,24 @@ export async function synth(
       ? configFn({ platform, params: {}, paths })
       : configFn;
 
-    // Check if the config returned an App (v2 style)
-    if (initial instanceof App) {
-      return synthFromApp(initial, platform);
+    // Check if the config returned a Machine (v2 style)
+    if (initial instanceof Machine) {
+      // Check for static params on the Machine subclass
+      const paramDefs = (initial.constructor as typeof Machine).params;
+      if (paramDefs && paramDefs.length > 0) {
+        const lockFilePath = opts?.lockFilePath ??
+          join(paths.configDir, "dacha", "params.lock.json");
+        const params = await loadParams(paramDefs, lockFilePath);
+
+        // Re-invoke the config function with resolved params
+        if (typeof configFn === "function") {
+          const final = configFn({ platform, params, paths });
+          if (final instanceof Machine) {
+            return synthFromMachine(final, platform, params);
+          }
+        }
+      }
+      return synthFromMachine(initial, platform, {});
     }
 
     // Legacy DachaConfig path — load params and re-evaluate
@@ -139,9 +154,9 @@ export async function synth(
       ? configFn({ platform, params, paths })
       : config;
 
-    // If second pass returns an App, use scope tree path
-    if (finalConfig instanceof App) {
-      return synthFromApp(finalConfig as unknown as App, platform);
+    // If second pass returns a Machine, use scope tree path
+    if (finalConfig instanceof Machine) {
+      return synthFromMachine(finalConfig as unknown as Machine, platform, params);
     }
 
     return synthFromDachaConfig(finalConfig, platform, params);
@@ -151,9 +166,9 @@ export async function synth(
   return synthFromDachaConfig(configOrPath, platform, {});
 }
 
-/** Synthesize from an App instance by walking the scope tree. */
-function synthFromApp(app: App, platform: Platform): ResolvedState {
-  const leaves = collectFromTree(app);
+/** Synthesize from a Machine instance by walking the scope tree. */
+function synthFromMachine(machine: Machine, platform: Platform, params: Params): ResolvedState {
+  const leaves = collectFromTree(machine);
   debug(`scope tree: ${leaves.length} leaf resources collected`);
 
   // Convert to ResolvedResource for the graph builder
@@ -184,7 +199,7 @@ function synthFromApp(app: App, platform: Platform): ResolvedState {
       generatedAt: new Date().toISOString(),
       repoPath: "",
       profileChain: [],
-      params: {},
+      params,
     },
   };
 }
@@ -203,7 +218,7 @@ function synthFromDachaConfig(
   // Collect all resources from the resolved profile
   const allResources: ResourceDef[] = [
     ...(resolved.packages ?? []),
-    ...(resolved.dotfiles ?? []),
+    ...(resolved.files ?? []),
     ...(resolved.commands ?? []),
     ...(resolved.secrets ?? []),
   ];

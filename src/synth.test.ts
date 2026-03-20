@@ -1,9 +1,9 @@
 import { assertEquals } from "@std/assert";
 import { collectFromTree, matchesPlatform, synth } from "./synth.ts";
-import { App } from "./app.ts";
+import { Machine } from "./app.ts";
 import { Package } from "./resources/package.ts";
 import { Command } from "./resources/command.ts";
-import { Dotfile } from "./resources/dotfile.ts";
+import { File } from "./resources/file.ts";
 import type { DachaConfig, Profile } from "./types.ts";
 
 // --- matchesPlatform ---
@@ -159,7 +159,7 @@ Deno.test("synth - does not write files or produce side effects", async () => {
 // ============================================================
 
 Deno.test("collectFromTree - single resource returns one leaf", () => {
-  const app = new App();
+  const app = new Machine();
   new Package(app, "git", { name: "git" });
   const leaves = collectFromTree(app);
   assertEquals(leaves.length, 1);
@@ -167,7 +167,7 @@ Deno.test("collectFromTree - single resource returns one leaf", () => {
 });
 
 Deno.test("collectFromTree - two-level composite collects only leaves", () => {
-  const app = new App();
+  const app = new Machine();
   const parent = new Command(app, "parent", { run: "echo" });
   new Package(parent, "child-a", { name: "a" });
   new Package(parent, "child-b", { name: "b" });
@@ -182,7 +182,7 @@ Deno.test("collectFromTree - two-level composite collects only leaves", () => {
 });
 
 Deno.test("collectFromTree - three-level nesting collects deepest leaves", () => {
-  const app = new App();
+  const app = new Machine();
   const l1 = new Command(app, "l1", { run: "echo" });
   const l2 = new Command(l1, "l2", { run: "echo" });
   new Package(l2, "leaf", { name: "leaf" });
@@ -193,10 +193,10 @@ Deno.test("collectFromTree - three-level nesting collects deepest leaves", () =>
 });
 
 Deno.test("collectFromTree - mixed flat and nested resources", () => {
-  const app = new App();
+  const app = new Machine();
   new Package(app, "flat-pkg", { name: "flat" });
   const composite = new Command(app, "composite", { run: "echo" });
-  new Dotfile(composite, "nested-df", { source: "s", destination: "d" });
+  new File(composite, "nested-df", { source: "s", destination: "d" });
 
   const leaves = collectFromTree(app);
   const ids = leaves.map((r) => r.id);
@@ -206,29 +206,33 @@ Deno.test("collectFromTree - mixed flat and nested resources", () => {
 });
 
 Deno.test("collectFromTree - child inherits parent dependencies", () => {
-  const app = new App();
-  const parent = new Command(app, "parent", { run: "echo", dependsOn: ["base"] });
+  const app = new Machine();
+  const base = new Package(app, "base", { name: "base" });
+  const parent = new Command(app, "parent", { run: "echo", dependsOn: [base] });
   new Package(parent, "child", { name: "child" });
 
   const leaves = collectFromTree(app);
-  assertEquals(leaves.length, 1);
-  assertEquals(leaves[0].dependsOn.includes("base"), true);
+  assertEquals(leaves.length, 2); // base + child
+  const child = leaves.find((r) => r.id === "child")!;
+  assertEquals(child.dependsOn.includes("base"), true);
 });
 
 Deno.test("collectFromTree - grandchild inherits ancestor dependencies", () => {
-  const app = new App();
-  const l1 = new Command(app, "l1", { run: "echo", dependsOn: ["root-dep"] });
-  const l2 = new Command(l1, "l2", { run: "echo", dependsOn: ["mid-dep"] });
+  const app = new Machine();
+  const rootDep = new Package(app, "root-dep", { name: "root-dep" });
+  const midDep = new Package(app, "mid-dep", { name: "mid-dep" });
+  const l1 = new Command(app, "l1", { run: "echo", dependsOn: [rootDep] });
+  const l2 = new Command(l1, "l2", { run: "echo", dependsOn: [midDep] });
   new Package(l2, "leaf", { name: "leaf" });
 
   const leaves = collectFromTree(app);
-  assertEquals(leaves.length, 1);
-  assertEquals(leaves[0].dependsOn.includes("root-dep"), true);
-  assertEquals(leaves[0].dependsOn.includes("mid-dep"), true);
+  const leaf = leaves.find((r) => r.id === "leaf")!;
+  assertEquals(leaf.dependsOn.includes("root-dep"), true);
+  assertEquals(leaf.dependsOn.includes("mid-dep"), true);
 });
 
 Deno.test("collectFromTree - empty app returns empty list", () => {
-  const app = new App();
+  const app = new Machine();
   assertEquals(collectFromTree(app).length, 0);
 });
 
@@ -254,11 +258,11 @@ function countLeaves(children: Resource[]): number {
 
 // Helper: build a random scope tree under an App
 // Returns the total number of leaf nodes created
-function buildRandomTree(app: App, depth: number, childCount: number): number {
+function buildRandomTree(app: Machine, depth: number, childCount: number): number {
   let leafCount = 0;
   let idCounter = 0;
 
-  function addChildren(scope: Resource | App, remainingDepth: number, count: number): void {
+  function addChildren(scope: Resource | Machine, remainingDepth: number, count: number): void {
     for (let i = 0; i < count; i++) {
       const id = `r-${idCounter++}`;
       const resource = new Package(scope, id, { name: id });
@@ -283,7 +287,7 @@ Deno.test("PBT: Scope tree collection completeness with random trees", () => {
       fc.integer({ min: 0, max: 3 }),
       fc.integer({ min: 1, max: 5 }),
       (depth, childCount) => {
-        const app = new App();
+        const app = new Machine();
         buildRandomTree(app, depth, childCount);
 
         const leaves = collectFromTree(app);
@@ -308,18 +312,22 @@ Deno.test("PBT: Scope tree collection completeness with random trees", () => {
 
 // Feature: dacha-v2-redesign, Property 4: Child resources inherit parent dependencies
 Deno.test("PBT: Child resources inherit parent dependencies", () => {
-  const arbDep = fc.string({ minLength: 1, maxLength: 10 }).filter((s) => s.trim().length > 0);
-
   fc.assert(
     fc.property(
-      fc.array(arbDep, { minLength: 1, maxLength: 4 }),
       fc.integer({ min: 1, max: 4 }),
-      (parentDeps, childCount) => {
-        const app = new App();
+      fc.integer({ min: 1, max: 4 }),
+      (depCount, childCount) => {
+        const app = new Machine();
         let idCounter = 0;
 
+        // Create dep resources
+        const depResources: Package[] = [];
+        for (let i = 0; i < depCount; i++) {
+          depResources.push(new Package(app, `dep-${idCounter++}`, { name: `dep-${i}` }));
+        }
+
         // Create a composite parent with dependencies
-        const parent = new Command(app, `parent-${idCounter++}`, { run: "echo", dependsOn: parentDeps });
+        const parent = new Command(app, `parent-${idCounter++}`, { run: "echo", dependsOn: depResources });
 
         // Add leaf children
         for (let i = 0; i < childCount; i++) {
@@ -328,10 +336,19 @@ Deno.test("PBT: Child resources inherit parent dependencies", () => {
 
         const leaves = collectFromTree(app);
 
-        // Every leaf should have all parent deps
+        // Every leaf child should have all parent deps
         for (const leaf of leaves) {
-          for (const dep of parentDeps) {
-            assertEquals(leaf.dependsOn.includes(dep), true, `leaf ${leaf.id} missing dep ${dep}`);
+          if (leaf.id.startsWith("child-") || leaf.id.startsWith("dep-")) continue;
+          for (const dep of depResources) {
+            assertEquals(leaf.dependsOn.includes(dep.id), true, `leaf ${leaf.id} missing dep ${dep.id}`);
+          }
+        }
+
+        // More specifically, check the children of the parent
+        const childLeaves = leaves.filter((l) => l.id.startsWith("child-"));
+        for (const leaf of childLeaves) {
+          for (const dep of depResources) {
+            assertEquals(leaf.dependsOn.includes(dep.id), true, `leaf ${leaf.id} missing dep ${dep.id}`);
           }
         }
       },

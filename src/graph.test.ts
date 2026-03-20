@@ -11,7 +11,7 @@ type Resource = ResourceDef;
 Deno.test("buildGraph - independent resources are all returned, order preserved", () => {
   const resources: Resource[] = [
     { id: "a", type: "package" },
-    { id: "b", type: "dotfile" },
+    { id: "b", type: "file" },
     { id: "c", type: "command" },
   ];
 
@@ -57,7 +57,7 @@ Deno.test("buildGraph - explicit dependsOn chain: a → b → c", () => {
 Deno.test("findImplicitDeps - detects {{output.X.Y}} references", () => {
   const resource: Resource = {
     id: "tmpl",
-    type: "dotfile",
+    type: "file",
     source: "files/config",
     destination: "{{output.cmd-path.value}}/config",
   } as Resource;
@@ -99,7 +99,7 @@ Deno.test("buildGraph - implicit {{output.X.Y}} dep: referencing resource sorted
   const resources: Resource[] = [
     {
       id: "tmpl",
-      type: "dotfile",
+      type: "file",
       source: "f",
       destination: "{{output.other.val}}/.config",
     } as Resource,
