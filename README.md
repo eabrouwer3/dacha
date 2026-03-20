@@ -1,6 +1,6 @@
 # дача (dacha)
 
-Code-first dotfiles and system configuration manager. Define your packages, dotfiles, shell commands, and secrets in TypeScript — dacha synthesizes a dependency graph, detects your platform, and converges your system to the desired state.
+Code-first dotfiles and system configuration manager. Define your packages, dotfiles, shell commands, and secrets as TypeScript classes — dacha synthesizes a dependency graph, detects your platform, and converges your system to the desired state.
 
 ## Install
 
@@ -31,170 +31,189 @@ dacha apply
 
 ## How it works
 
-1. You write a `dacha.config.ts` in your dotfiles repo
-2. `dacha synth` evaluates the config — detecting your platform, resolving profile inheritance, filtering resources by OS/arch, and topologically sorting the dependency graph
-3. `dacha apply` walks the sorted resources, checks each one's current state, and applies only what's needed
+1. You write a `dacha.config.ts` in your dotfiles repo using the class-based API
+2. `dacha synth` evaluates the config — collecting resources from the scope tree, resolving dependencies, and topologically sorting the graph
+3. `dacha apply` walks the sorted resources, calls each one's `check()` to see if it's already satisfied, and `apply()` on anything that needs converging
 
 ## Configuration
 
-Your dotfiles repo contains a `dacha.config.ts` that exports a function (or object) returning a `DachaConfig`:
+Your dotfiles repo contains a `dacha.config.ts` that builds a resource tree using the `App` scope and resource classes:
 
 ```ts
-import type { DachaConfig, Platform, Params, Paths } from "dacha/mod.ts";
+import { App, Package, Dotfile, Command, Secret } from "@eabrouwer3/dacha";
 
-export default ({ platform, params, paths }: {
-  platform: Platform;
-  params: Params;
-  paths: Paths;
-}): DachaConfig => ({
-  repoPath: paths.repoDir,
-  target: workstation,
-  params: [
-    { name: "gitEmail", message: "Git email?", type: "text" },
-    { name: "useNeovim", message: "Install neovim?", type: "confirm", default: true },
-  ],
-  sync: { enabled: true },
-  update: { enabled: true, intervalHours: 24 },
-});
-```
+const app = new App();
 
-### Resources
+// Packages auto-register with the app scope
+new Package(app, "git", { name: "git" });
+new Package(app, "ripgrep", { name: "ripgrep", brew: "ripgrep", apt: "ripgrep" });
+new Package(app, "fish", { name: "fish" });
 
-There are four resource types:
-
-**package** — Install system packages via the detected package manager (brew, apt, dnf, yum). Supports per-platform overrides:
-
-```ts
-{
-  id: "ripgrep",
-  type: "package",
-  name: "ripgrep",
-  brew: "ripgrep",
-  apt: "ripgrep",
-}
-```
-
-**dotfile** — Copy (or template) files to their destination. Templates support `{{output.resourceId.key}}` interpolation from upstream resource outputs:
-
-```ts
-{
-  id: "gitconfig",
-  type: "dotfile",
+// Dotfiles with template interpolation
+new Dotfile(app, "gitconfig", {
   source: "./config/gitconfig",
   destination: "~/.gitconfig",
   template: true,
-}
-```
+});
 
-**command** — Run shell commands with optional idempotency checks. Commands can capture output for downstream use and be marked `critical` to halt the entire apply on failure:
-
-```ts
-{
-  id: "install-rust",
-  type: "command",
+// Commands with idempotency checks
+new Command(app, "install-rust", {
   run: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
   check: "command -v rustc",
-}
-```
+});
 
-**secret** — Decrypt [age](https://github.com/FiloSottile/age)-encrypted files and place them with specific permissions:
-
-```ts
-{
-  id: "ssh-key",
-  type: "secret",
+// Secrets decrypted via age
+new Secret(app, "ssh-key", {
   source: "./secrets/id_ed25519.age",
   destination: "~/.ssh/id_ed25519",
   permissions: "0600",
-}
+});
+
+export default app;
 ```
 
-### Profiles
+### Scope tree
 
-Profiles group resources and support inheritance. Child profiles override parent resources by `id`:
+Resources register themselves with a parent scope when constructed. The first argument to any resource constructor is its scope — either the `App` root or another `Resource`. This lets you compose logical groups:
 
 ```ts
-const base: Profile = {
-  name: "base",
-  packages: [
-    { id: "git", type: "package", name: "git" },
-    { id: "curl", type: "package", name: "curl" },
-  ],
-};
+const app = new App();
 
-const workstation: Profile = {
-  name: "workstation",
-  extends: [base],
-  packages: [
-    { id: "firefox", type: "package", name: "firefox", brewCask: "firefox" },
-  ],
-};
+// A parent resource that groups related children
+const devTools = new Command(app, "dev-tools", {
+  run: "echo 'dev tools ready'",
+  check: "true",
+});
+
+// Children register under devTools instead of app directly
+new Package(devTools, "neovim", { name: "neovim" });
+new Package(devTools, "tmux", { name: "tmux" });
 ```
 
-### Platform filtering
+When dacha collects resources, it walks the tree and gathers all leaf nodes for execution.
 
-Any package or command resource can include an `onlyOn` filter to restrict it to specific platforms:
+## Resources
+
+### Package
+
+Install system packages via the detected package manager (brew, apt, dnf, yum). On macOS, Homebrew is auto-installed if missing.
 
 ```ts
-{
-  id: "coreutils",
-  type: "package",
-  name: "coreutils",
-  onlyOn: { os: "darwin" },
-}
+new Package(app, "ripgrep", {
+  name: "ripgrep",
+  brew: "ripgrep",       // override for brew
+  apt: "ripgrep",        // override for apt
+  yum: "ripgrep",        // override for yum
+});
+
+// Cask packages
+new Package(app, "firefox", {
+  name: "firefox",
+  brewCask: "firefox",
+});
 ```
 
-### Parameters
+### Dotfile
 
-Define interactive prompts that are asked once and saved to a lock file (`~/.config/dacha/params.lock.json`). Supported types: `text`, `confirm`, `select`.
+Copy or template files to their destination. Templates support `{{output.resourceId.key}}` interpolation from upstream resource outputs.
 
 ```ts
-params: [
-  { name: "theme", message: "Color theme?", type: "select", choices: ["dark", "light"] },
-]
+new Dotfile(app, "gitconfig", {
+  source: "./config/gitconfig",
+  destination: "~/.gitconfig",
+  template: true,          // enable interpolation
+});
 ```
 
-Reset saved params with `dacha params reset` or `dacha init --reconfigure`.
+### Command
+
+Run shell commands with optional idempotency checks. If `check` exits 0, the command is skipped. Commands can capture output for downstream use and be marked `critical` to halt the entire apply on failure.
+
+```ts
+new Command(app, "install-rust", {
+  run: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y",
+  check: "command -v rustc",
+  critical: true,
+  captureOutput: "rustc_path",
+});
+```
+
+### Secret
+
+Decrypt [age](https://github.com/FiloSottile/age)-encrypted files and place them with specific permissions.
+
+```ts
+new Secret(app, "ssh-key", {
+  source: "./secrets/id_ed25519.age",
+  destination: "~/.ssh/id_ed25519",
+  permissions: "0600",
+});
+```
 
 ### Dependencies
 
 Resources can declare explicit dependencies via `dependsOn`. Implicit dependencies are also detected from `{{output.resourceId.key}}` template references. dacha builds a DAG, detects cycles, and applies resources in topological order.
 
+```ts
+new Command(app, "setup-rust", {
+  run: "rustup default stable",
+  check: "rustup show | grep stable",
+  dependsOn: ["install-rust"],
+});
+```
+
+## Library usage
+
+dacha is published on JSR as `@eabrouwer3/dacha`. You can import and use it programmatically:
+
+```ts
+import { App, Package, synth, apply } from "@eabrouwer3/dacha";
+
+const app = new App();
+new Package(app, "git", { name: "git" });
+
+const state = await synth(app);
+await apply(state);
+```
+
 ## CLI
 
 ```
-dacha init <url>          Clone a dotfiles repo and bootstrap the system
-  --path <path>           Local clone path (default ~/.dotfiles)
-  --reconfigure           Reset saved parameters and re-prompt
-  -y, --yes               Auto-confirm prompts
+dacha init <url>              Clone a dotfiles repo and bootstrap the system
+  --path <path>               Local clone path (default ~/.dacha)
+  --reconfigure               Reset saved parameters and re-prompt
+  -y, --yes                   Auto-confirm prompts
 
-dacha synth               Evaluate config and output resolved state as JSON
-  --config <path>         Path to dacha.config.ts
+dacha synth                   Evaluate config and output resolved state as JSON
+  --config <path>             Path to dacha.config.ts
 
-dacha apply               Evaluate config and converge the system
-  --config <path>         Path to dacha.config.ts
-  --dry-run               Show what would change without applying
-  -y, --yes               Auto-confirm prompts
+dacha apply                   Evaluate config and converge the system
+  --config <path>             Path to dacha.config.ts
+  --dry-run                   Show what would change without applying
+  -y, --yes                   Auto-confirm prompts
 
-dacha sync start          Install and start the background sync daemon
-dacha sync stop           Stop and uninstall the sync daemon
+dacha sync start              Install and start the background sync daemon
+dacha sync stop               Stop and uninstall the sync daemon
 
-dacha update              Pull remote changes and apply
+dacha update                  Pull remote changes and apply
 
-dacha secret encrypt <f>  Encrypt a file using age
-  --recipients <file>     Path to age recipients file
+dacha secret encrypt <f>      Encrypt a file using age
+  --recipients <file>         Path to age recipients file
 
-dacha secret edit <f>     Decrypt, edit in $EDITOR, and re-encrypt
-  --identity <file>       Path to age identity file
+dacha secret edit <f>         Decrypt, edit in $EDITOR, and re-encrypt
+  --identity <file>           Path to age identity file
 
-dacha status              Show daemon state, last sync, and pending updates
+dacha status                  Show daemon state, last sync, and pending updates
 
-dacha params reset [name] Reset saved parameters (all or by name)
+dacha params reset [name]     Reset saved parameters (all or by name)
+
+dacha permissions show        Display currently granted Deno permissions
+dacha permissions reset       Reset permissions — will re-prompt on next run
 
 Global flags:
-  -q, --quiet             Suppress non-error output
-  -v, --verbose           Enable debug output
-  --version               Show version
+  -q, --quiet                 Suppress non-error output
+  -v, --verbose               Enable debug output
+  --version                   Show version
 ```
 
 ## Background sync
@@ -219,6 +238,15 @@ dacha secret encrypt myfile --recipients recipients.txt
 dacha secret edit myfile.age
 ```
 
+## Permissions
+
+dacha uses granular Deno permissions instead of `--allow-all`. On first run it prompts for each required permission (read, write, env, net, run, sys) and persists approvals to `~/.config/dacha/permissions.json`.
+
+```sh
+dacha permissions show    # see what's granted
+dacha permissions reset   # clear and re-prompt next run
+```
+
 ## Supported platforms
 
 | OS    | Arch  | Package Manager |
@@ -235,14 +263,9 @@ Linux distro detection reads `/etc/os-release` to select the right package manag
 Requires [Deno](https://deno.land/) v2+.
 
 ```sh
-# Run in dev mode
-deno task dev
-
-# Run tests
-deno task test
-
-# Compile a local binary
-deno task compile
+deno task dev       # run in dev mode
+deno task test      # run tests
+deno task compile   # compile a local binary
 ```
 
 ## License
