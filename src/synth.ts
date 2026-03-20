@@ -19,6 +19,8 @@ import { resolveProfile } from "./profile.ts";
 import { buildGraph } from "./graph.ts";
 import { loadParams } from "./params.ts";
 import { join } from "@std/path";
+import { toFileUrl } from "@std/path";
+import { transpile } from "@deno/emit";
 import { debug, info } from "./util/log.ts";
 
 /** Options for the synth function. */
@@ -90,6 +92,30 @@ export function collectFromTree(app: Machine): Resource[] {
 }
 
 /**
+ * Import a config file, transpiling TypeScript to JavaScript first so that
+ * compiled binaries (which can't dynamically import .ts) work correctly.
+ */
+async function importConfig(configPath: string): Promise<Record<string, unknown>> {
+  if (configPath.endsWith(".ts")) {
+    const fileUrl = toFileUrl(configPath);
+    const result = await transpile(fileUrl);
+    const jsCode = result.get(fileUrl.href);
+    if (!jsCode) {
+      throw new Error(`transpile produced no output for ${configPath}`);
+    }
+    // Write to a temp .mjs file and import that
+    const tmpFile = await Deno.makeTempFile({ suffix: ".mjs" });
+    try {
+      await Deno.writeTextFile(tmpFile, jsCode);
+      return await import(toFileUrl(tmpFile).href);
+    } finally {
+      Deno.remove(tmpFile).catch(() => {});
+    }
+  }
+  return await import(configPath);
+}
+
+/**
  * Synthesize a resolved state from a dacha config or Machine instance.
  *
  * Accepts:
@@ -113,7 +139,7 @@ export async function synth(
   // --- String path: dynamic import, may return App or DachaConfig ---
   if (typeof configOrPath === "string") {
     debug(`loading config from ${configOrPath}`);
-    const mod = await import(configOrPath);
+    const mod = await importConfig(configOrPath);
     const configFn = mod.default;
 
     // First pass: get param definitions (call with empty params)

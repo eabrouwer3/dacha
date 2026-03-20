@@ -1,6 +1,6 @@
 {
   "name": "@eabrouwer3/dacha",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "license": "MIT",
   "exports": {
     ".": "./src/mod.ts"
@@ -12,6 +12,7 @@
     "@std/fs": "jsr:@std/fs@^1",
     "@cliffy/command": "jsr:@cliffy/command@^1",
     "@cliffy/prompt": "jsr:@cliffy/prompt@^1",
+    "@deno/emit": "jsr:@deno/emit@^0",
     "fast-check": "npm:fast-check@^3"
   },
   "tasks": {
