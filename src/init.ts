@@ -133,11 +133,15 @@ export async function init(url: string, opts: InitOpts = {}): Promise<void> {
   }
 
   // Synth — resolve the config into desired state
+  // Change to repo directory so relative paths in config resolve correctly
+  const prevCwd = Deno.cwd();
+  Deno.chdir(repoPath);
   const configPath = join(repoPath, "dacha.config.ts");
   const result = await synth(configPath);
 
   // Apply — converge the system
   const report = await apply(result.resources, result.platform, { yes: opts.yes });
+  Deno.chdir(prevCwd);
 
   if (report.failed.length > 0) {
     warn(`apply completed with ${report.failed.length} failure(s)`);

@@ -55,6 +55,8 @@ root
   .option("-y, --yes", "Auto-confirm prompts.")
   .action(async ({ config, dryRun, yes }) => {
     const configPath = config ?? await resolveConfigPath();
+    const repoDir = (await import("@std/path")).dirname(configPath);
+    Deno.chdir(repoDir);
     const { synth } = await import("./synth.ts");
     const { apply } = await import("./apply.ts");
     const result = await synth(configPath);
@@ -115,6 +117,7 @@ root
       const { gitPull } = await import("./util/git.ts");
       await gitPull(repoDir);
       const configPath = await resolveConfigPath();
+      Deno.chdir(repoDir);
       const { synth } = await import("./synth.ts");
       const { apply } = await import("./apply.ts");
       const synthResult = await synth(configPath);

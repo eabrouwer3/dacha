@@ -113,6 +113,15 @@ export async function ensureBrew(): Promise<void> {
         `Failed to auto-install Homebrew: ${install.stderr.trim() || `exit code ${install.code}`}`,
       );
     }
+    // Add Homebrew to PATH for this session (Apple Silicon installs to /opt/homebrew)
+    const brewPaths = ["/opt/homebrew/bin", "/usr/local/bin"];
+    for (const p of brewPaths) {
+      try {
+        await Deno.stat(`${p}/brew`);
+        Deno.env.set("PATH", `${p}:${Deno.env.get("PATH") ?? ""}`);
+        break;
+      } catch { /* not here */ }
+    }
   }
   _brewVerified = true;
 }
