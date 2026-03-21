@@ -117,8 +117,8 @@ root
       const configPath = await resolveConfigPath();
       const { synth } = await import("./synth.ts");
       const { apply } = await import("./apply.ts");
-      const result = await synth(configPath);
-      await apply(result.resources, result.platform);
+      const synthResult = await synth(configPath);
+      await apply(synthResult.resources, synthResult.platform);
     } else {
       info("already up to date");
     }
