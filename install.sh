@@ -9,7 +9,7 @@ set -e
 GITHUB_OWNER="eabrouwer3"
 REPO="dacha"
 INSTALL_DIR="$HOME/.local/bin"
-BINARY_NAME="dacha"
+DACHA_DIR="$HOME/.local/share/dacha/cli"
 
 # ── Helpers ──────────────────────────────────────────────
 
@@ -30,29 +30,7 @@ error() {
   exit 1
 }
 
-# ── Platform detection ───────────────────────────────────
-
-detect_platform() {
-  OS="$(uname -s)"
-  ARCH="$(uname -m)"
-
-  case "$OS" in
-    Darwin) OS="darwin" ;;
-    Linux)  OS="linux" ;;
-    *)      error "Unsupported OS: $OS" ;;
-  esac
-
-  case "$ARCH" in
-    arm64 | aarch64) ARCH="arm64" ;;
-    x86_64)          ARCH="x64" ;;
-    *)               error "Unsupported architecture: $ARCH" ;;
-  esac
-
-  BINARY="dacha-${OS}-${ARCH}"
-  info "Detected platform: ${OS}/${ARCH}"
-}
-
-# ── Download ─────────────────────────────────────────────
+# ── Download helper ──────────────────────────────────────
 
 download() {
   url="$1"
@@ -67,53 +45,81 @@ download() {
   fi
 }
 
-# ── Checksum verification ────────────────────────────────
+# ── Ensure Deno is installed ─────────────────────────────
 
-verify_checksum() {
-  binary_path="$1"
-  checksums_path="$2"
-
-  expected="$(grep "${BINARY}" "$checksums_path" | awk '{print $1}')"
-  if [ -z "$expected" ]; then
-    error "No checksum found for ${BINARY} in sha256sums.txt"
+ensure_deno() {
+  if command -v deno >/dev/null 2>&1; then
+    info "Deno already installed: $(deno --version | head -1)"
+    return
   fi
 
-  if command -v sha256sum >/dev/null 2>&1; then
-    actual="$(sha256sum "$binary_path" | awk '{print $1}')"
-  elif command -v shasum >/dev/null 2>&1; then
-    actual="$(shasum -a 256 "$binary_path" | awk '{print $1}')"
-  else
-    warn "Neither sha256sum nor shasum found — skipping checksum verification"
-    return 0
+  info "Installing Deno..."
+  curl -fsSL https://deno.land/install.sh | sh
+
+  # Add to PATH for this session
+  export DENO_INSTALL="$HOME/.deno"
+  export PATH="$DENO_INSTALL/bin:$PATH"
+
+  if ! command -v deno >/dev/null 2>&1; then
+    error "Deno installation failed. Please install manually: https://deno.land"
   fi
 
-  if [ "$expected" != "$actual" ]; then
-    error "Checksum mismatch!\n  expected: ${expected}\n  actual:   ${actual}"
-  fi
-
-  info "Checksum verified"
+  success "Deno installed: $(deno --version | head -1)"
 }
 
-# ── Install ──────────────────────────────────────────────
+# ── Resolve latest version tag ───────────────────────────
 
-install_binary() {
-  BASE_URL="https://github.com/${GITHUB_OWNER}/${REPO}/releases/latest/download"
-  TMPDIR_INSTALL="$(mktemp -d)"
-  trap 'rm -rf "$TMPDIR_INSTALL"' EXIT
+resolve_version() {
+  if command -v curl >/dev/null 2>&1; then
+    TAG="$(curl -fsSL -o /dev/null -w '%{redirect_url}' "https://github.com/${GITHUB_OWNER}/${REPO}/releases/latest" | grep -o '[^/]*$')"
+  elif command -v wget >/dev/null 2>&1; then
+    TAG="$(wget --spider --max-redirect=0 "https://github.com/${GITHUB_OWNER}/${REPO}/releases/latest" 2>&1 | grep -o 'Location:.*' | grep -o '[^/]*$')"
+  fi
 
-  info "Downloading ${BINARY}..."
-  download "${BASE_URL}/${BINARY}" "${TMPDIR_INSTALL}/${BINARY}"
+  if [ -z "$TAG" ]; then
+    TAG="main"
+    warn "Could not resolve latest release — using main branch"
+  fi
 
-  info "Downloading sha256sums.txt..."
-  download "${BASE_URL}/sha256sums.txt" "${TMPDIR_INSTALL}/sha256sums.txt"
+  info "Version: ${TAG}"
+}
 
-  verify_checksum "${TMPDIR_INSTALL}/${BINARY}" "${TMPDIR_INSTALL}/sha256sums.txt"
+# ── Clone or update dacha source ─────────────────────────
 
+install_source() {
+  if [ -d "$DACHA_DIR/.git" ]; then
+    info "Updating dacha source..."
+    git -C "$DACHA_DIR" fetch --tags --quiet
+    git -C "$DACHA_DIR" checkout "$TAG" --quiet 2>/dev/null || git -C "$DACHA_DIR" checkout "origin/$TAG" --quiet
+  else
+    info "Cloning dacha source..."
+    mkdir -p "$(dirname "$DACHA_DIR")"
+    git clone --quiet "https://github.com/${GITHUB_OWNER}/${REPO}.git" "$DACHA_DIR"
+    git -C "$DACHA_DIR" checkout "$TAG" --quiet 2>/dev/null || true
+  fi
+}
+
+# ── Create launcher script ───────────────────────────────
+
+install_launcher() {
   mkdir -p "$INSTALL_DIR"
-  mv "${TMPDIR_INSTALL}/${BINARY}" "${INSTALL_DIR}/${BINARY_NAME}"
-  chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
 
-  success "Installed ${BINARY_NAME} to ${INSTALL_DIR}/${BINARY_NAME}"
+  cat > "${INSTALL_DIR}/dacha" << 'LAUNCHER'
+#!/bin/sh
+# dacha launcher — runs dacha via deno from source
+DACHA_DIR="$HOME/.local/share/dacha/cli"
+DENO_INSTALL="$HOME/.deno"
+
+# Ensure deno is on PATH
+if [ -d "$DENO_INSTALL/bin" ]; then
+  PATH="$DENO_INSTALL/bin:$PATH"
+fi
+
+exec deno run --allow-all "$DACHA_DIR/src/cli.ts" "$@"
+LAUNCHER
+
+  chmod +x "${INSTALL_DIR}/dacha"
+  success "Installed dacha launcher to ${INSTALL_DIR}/dacha"
 }
 
 # ── PATH check ───────────────────────────────────────────
@@ -156,13 +162,19 @@ parse_args() {
 
 main() {
   parse_args "$@"
-  detect_platform
-  install_binary
+  ensure_deno
+  resolve_version
+  install_source
+  install_launcher
   check_path
 
+  # Cache deno dependencies
+  info "Caching dependencies..."
+  deno cache "$DACHA_DIR/src/cli.ts" 2>/dev/null || true
+
   if [ -n "$REPO_URL" ]; then
-    info "Running: ${BINARY_NAME} init ${REPO_URL} --path ~/.dacha"
-    "${INSTALL_DIR}/${BINARY_NAME}" init "$REPO_URL" --path "$HOME/.dacha"
+    info "Running: dacha init ${REPO_URL} --path ~/.dacha"
+    "${INSTALL_DIR}/dacha" init "$REPO_URL" --path "$HOME/.dacha"
   fi
 
   success "Done! Run 'dacha --help' to get started."
