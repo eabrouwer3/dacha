@@ -21,6 +21,7 @@ import { loadParams } from "./params.ts";
 import { join } from "@std/path";
 import { toFileUrl } from "@std/path";
 import { transpile } from "@deno/emit";
+import * as dachaExports from "./mod.ts";
 import { debug, info } from "./util/log.ts";
 
 /** Options for the synth function. */
@@ -113,17 +114,40 @@ export async function importConfig(configPath: string): Promise<Record<string, u
     const result = await transpile(fileUrl, {
       importMap: importMapUrl?.href,
     });
-    const jsCode = result.get(fileUrl.href);
+    let jsCode = result.get(fileUrl.href);
     if (!jsCode) {
       throw new Error(`transpile produced no output for ${configPath}`);
     }
+
+    // The transpiled JS still has `from "@eabrouwer3/dacha"` which can't be
+    // resolved by a compiled binary. Write a shim that re-exports the classes
+    // from globalThis (where we place them before importing) and rewrite the
+    // import to point at the shim.
+    const shimFile = join(configDir, "_dacha_shim.mjs");
+    const exportNames = Object.keys(dachaExports).filter(
+      (k) => typeof (dachaExports as Record<string, unknown>)[k] !== "undefined",
+    );
+    const shimCode = `const _g = globalThis.__dacha;\n` +
+      exportNames.map((n) => `export const ${n} = _g.${n};`).join("\n") + "\n";
+
+    // Rewrite bare dacha imports to use the shim
+    jsCode = jsCode.replace(
+      /from\s+["']@eabrouwer3\/dacha["']/g,
+      `from "./_dacha_shim.mjs"`,
+    );
+
     // Write next to the original so relative imports still resolve
     const tmpFile = configPath.replace(/\.ts$/, ".tmp.mjs");
     try {
+      // Expose dacha exports on globalThis for the shim
+      (globalThis as Record<string, unknown>).__dacha = dachaExports;
+      await Deno.writeTextFile(shimFile, shimCode);
       await Deno.writeTextFile(tmpFile, jsCode);
       return await import(toFileUrl(tmpFile).href);
     } finally {
+      delete (globalThis as Record<string, unknown>).__dacha;
       Deno.remove(tmpFile).catch(() => {});
+      Deno.remove(shimFile).catch(() => {});
     }
   }
   return await import(configPath);
