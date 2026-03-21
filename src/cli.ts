@@ -3,7 +3,7 @@
 import { Command } from "@cliffy/command";
 import { setLogLevel } from "./util/log.ts";
 
-const VERSION = "0.1.0";
+const VERSION = "0.4.0";
 
 // --- Root command ---
 
@@ -71,7 +71,7 @@ syncCmd
   .description("Install and start the sync daemon.")
   .action(async () => {
     const os = Deno.build.os;
-    const dachaPath = Deno.execPath();
+    const dachaPath = resolveDachaPath();
     if (os === "darwin") {
       const { installSyncLaunchd } = await import("./sync/launchd.ts");
       await installSyncLaunchd(dachaPath);
@@ -233,6 +233,12 @@ root.command("permissions", permissionsCmd);
 
 // --- Helpers ---
 
+/** Resolve the path to the dacha launcher script. */
+function resolveDachaPath(): string {
+  const home = Deno.env.get("HOME") ?? "~";
+  return `${home}/.local/bin/dacha`;
+}
+
 /** Read the global config to find the repo path. */
 async function resolveRepoDir(): Promise<string> {
   const home = Deno.env.get("HOME") ?? "~";
@@ -263,9 +269,5 @@ async function resolveConfigPath(): Promise<string> {
 }
 
 // --- Parse and run ---
-
-// Ensure Deno permissions are granted before running commands
-const { ensurePermissions } = await import("./permissions.ts");
-await ensurePermissions();
 
 await root.parse(Deno.args);

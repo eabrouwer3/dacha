@@ -154,7 +154,8 @@ export async function init(url: string, opts: InitOpts = {}): Promise<void> {
     ? configFn({ platform, params: result.state.metadata.params, paths })
     : configFn;
 
-  const dachaPath = Deno.execPath();
+  const home = Deno.env.get("HOME") ?? "~";
+  const dachaPath = `${home}/.local/bin/dacha`;
 
   // Install sync daemon if enabled
   if (config.sync?.enabled) {

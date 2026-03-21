@@ -3,7 +3,6 @@
 import { join } from "@std/path";
 import { exec } from "../util/shell.ts";
 import { debug, error, info, warn } from "../util/log.ts";
-import { buildPermissionFlags, loadPermissions } from "../permissions.ts";
 
 const UNIT_FILENAME = "dacha-sync.service";
 
@@ -15,18 +14,14 @@ function unitPath(): string {
 
 /**
  * Generate the systemd user unit file content for the sync daemon.
- * @param dachaPath - Absolute path to the `dacha` binary.
- * @param permissionFlags - Deno permission flags derived from the Permission_Store.
+ * @param dachaPath - Absolute path to the `dacha` launcher script.
  */
-export function generateSyncUnit(dachaPath: string, permissionFlags: string[] = []): string {
-  const flagStr = permissionFlags.length > 0
-    ? " " + permissionFlags.join(" ")
-    : "";
+export function generateSyncUnit(dachaPath: string): string {
   return `[Unit]
 Description=dacha sync daemon
 
 [Service]
-ExecStart=${dachaPath}${flagStr} sync run
+ExecStart=${dachaPath} sync run
 Restart=always
 RestartSec=5
 
@@ -37,7 +32,7 @@ WantedBy=default.target
 
 /**
  * Write the systemd user unit, reload the daemon, enable and start the service.
- * @param dachaPath - Absolute path to the `dacha` binary.
+ * @param dachaPath - Absolute path to the `dacha` launcher script.
  */
 export async function installSyncSystemd(dachaPath: string): Promise<void> {
   const dest = unitPath();
@@ -46,11 +41,7 @@ export async function installSyncSystemd(dachaPath: string): Promise<void> {
   const dir = join(Deno.env.get("HOME") ?? "~", ".config", "systemd", "user");
   await Deno.mkdir(dir, { recursive: true });
 
-  // Derive permission flags from the Permission_Store
-  const store = await loadPermissions();
-  const flags = buildPermissionFlags(store);
-
-  const unit = generateSyncUnit(dachaPath, flags);
+  const unit = generateSyncUnit(dachaPath);
   await Deno.writeTextFile(dest, unit);
   info(`wrote unit file to ${dest}`);
 
