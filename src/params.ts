@@ -2,7 +2,6 @@
 // Reads saved params from a lock file, prompts for missing values
 // interactively, and writes the updated lock file atomically.
 
-import { Confirm, Input, Select } from "@cliffy/prompt";
 import { dirname } from "@std/path";
 import type { ParamDefinition, Params } from "./types.ts";
 import { debug, info } from "./util/log.ts";
@@ -43,28 +42,37 @@ export async function writeLockFile(
   await Deno.rename(tmp, path);
 }
 
-/** Prompt for a single parameter value using Cliffy prompts. */
-async function promptParam(def: ParamDefinition): Promise<string | boolean> {
-  switch (def.type) {
-    case "confirm":
-      return await Confirm.prompt({
-        message: def.message,
-        default: typeof def.default === "boolean" ? def.default : undefined,
-      });
+/** Prompt for a single parameter value using built-in prompt(). */
+function promptParam(def: ParamDefinition): string | boolean {
+  const defaultHint = def.default !== undefined ? ` (${def.default})` : "";
 
-    case "select":
-      return await Select.prompt({
-        message: def.message,
-        options: def.choices ?? [],
-        default: typeof def.default === "string" ? def.default : undefined,
-      });
+  switch (def.type) {
+    case "confirm": {
+      const dflt = typeof def.default === "boolean" ? def.default : false;
+      const hint = dflt ? "[Y/n]" : "[y/N]";
+      const answer = prompt(`${def.message} ${hint}`) ?? "";
+      if (answer.trim() === "") return dflt;
+      return /^y(es)?$/i.test(answer.trim());
+    }
+
+    case "select": {
+      const choices = def.choices ?? [];
+      const lines = choices.map((c, i) => `  ${i + 1}) ${c}`).join("\n");
+      const answer = prompt(`${def.message}\n${lines}\nChoice${defaultHint}`) ?? "";
+      if (answer.trim() === "" && def.default) return def.default as string;
+      const idx = parseInt(answer.trim(), 10);
+      if (idx >= 1 && idx <= choices.length) return choices[idx - 1];
+      // Try matching by value
+      if (choices.includes(answer.trim())) return answer.trim();
+      return def.default as string ?? choices[0] ?? "";
+    }
 
     case "text":
-    default:
-      return await Input.prompt({
-        message: def.message,
-        default: typeof def.default === "string" ? def.default : undefined,
-      });
+    default: {
+      const answer = prompt(`${def.message}${defaultHint}`) ?? "";
+      if (answer.trim() === "" && def.default) return def.default as string;
+      return answer;
+    }
   }
 }
 
@@ -88,7 +96,7 @@ export async function loadParams(
       continue;
     }
     info(`prompting for parameter: ${def.name}`);
-    params[def.name] = await promptParam(def);
+    params[def.name] = promptParam(def);
     prompted = true;
   }
 
