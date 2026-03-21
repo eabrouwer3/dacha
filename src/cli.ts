@@ -3,7 +3,7 @@
 import { Command } from "@cliffy/command";
 import { setLogLevel } from "./util/log.ts";
 
-const VERSION = "0.4.0";
+const VERSION = "0.4.1";
 
 // --- Root command ---
 
