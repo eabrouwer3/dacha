@@ -60,7 +60,8 @@ Deno.test("synth - minimal config produces valid ResolvedState structure", async
     },
   };
 
-  const state = await synth(config);
+  const result = await synth(config);
+  const state = result.state;
 
   // Has platform
   assertEquals(typeof state.platform.os, "string");
@@ -93,7 +94,8 @@ Deno.test("synth - profile chain metadata reflects inheritance chain", async () 
     target: myMachine,
   };
 
-  const state = await synth(config);
+  const result = await synth(config);
+  const state = result.state;
 
   assertEquals(state.metadata.profileChain, ["base", "desktop", "my-machine"]);
 });
@@ -110,7 +112,8 @@ Deno.test("synth - resources are in topological order (dependency before depende
     },
   };
 
-  const state = await synth(config);
+  const result = await synth(config);
+  const state = result.state;
   const ids = state.resources.map((r) => r.id);
 
   assertEquals(ids.indexOf("pkg-db") < ids.indexOf("cmd-app"), true, "pkg-db should come before cmd-app");
@@ -124,7 +127,8 @@ Deno.test("synth - params are empty object when no params defined", async () => 
     target: { name: "test" },
   };
 
-  const state = await synth(config);
+  const result = await synth(config);
+  const state = result.state;
 
   assertEquals(state.metadata.params, {});
 });

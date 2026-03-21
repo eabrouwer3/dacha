@@ -134,10 +134,10 @@ export async function init(url: string, opts: InitOpts = {}): Promise<void> {
 
   // Synth — resolve the config into desired state
   const configPath = join(repoPath, "dacha.config.ts");
-  const state = await synth(configPath);
+  const result = await synth(configPath);
 
   // Apply — converge the system
-  const report = await apply(state, { yes: opts.yes });
+  const report = await apply(result.resources, result.platform, { yes: opts.yes });
 
   if (report.failed.length > 0) {
     warn(`apply completed with ${report.failed.length} failure(s)`);
@@ -151,7 +151,7 @@ export async function init(url: string, opts: InitOpts = {}): Promise<void> {
   const platform = detectPlatform();
   const paths = resolvePaths();
   const config = typeof configFn === "function"
-    ? configFn({ platform, params: state.metadata.params, paths })
+    ? configFn({ platform, params: result.state.metadata.params, paths })
     : configFn;
 
   const dachaPath = Deno.execPath();

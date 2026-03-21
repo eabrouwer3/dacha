@@ -40,6 +40,7 @@ export type {
 
 // Utility functions
 export { synth } from "./synth.ts";
+export type { SynthResult } from "./synth.ts";
 export { apply } from "./apply.ts";
 export { resolveProfile } from "./profile.ts";
 export { buildGraph } from "./graph.ts";

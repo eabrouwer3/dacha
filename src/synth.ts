@@ -29,6 +29,13 @@ export interface SynthOpts {
   lockFilePath?: string;
 }
 
+/** Result of synth — includes both serializable state and live Resource instances. */
+export interface SynthResult {
+  state: ResolvedState;
+  resources: Resource[];
+  platform: Platform;
+}
+
 /** Check whether a platform filter matches the current platform. */
 export function matchesPlatform(
   filter: PlatformFilter,
@@ -164,7 +171,7 @@ export async function importConfig(configPath: string): Promise<Record<string, u
 export async function synth(
   configOrPath: string | DachaConfig | Machine,
   opts?: SynthOpts,
-): Promise<ResolvedState> {
+): Promise<SynthResult> {
   const platform = detectPlatform();
   const paths = resolvePaths();
   info(`detected platform: ${platform.os}/${platform.arch}`);
@@ -231,7 +238,7 @@ export async function synth(
 }
 
 /** Synthesize from a Machine instance by walking the scope tree. */
-function synthFromMachine(machine: Machine, platform: Platform, params: Params): ResolvedState {
+function synthFromMachine(machine: Machine, platform: Platform, params: Params): SynthResult {
   const leaves = collectFromTree(machine);
   debug(`scope tree: ${leaves.length} leaf resources collected`);
 
@@ -242,8 +249,14 @@ function synthFromMachine(machine: Machine, platform: Platform, params: Params):
   // buildGraph expects objects with id/dependsOn — ResolvedResource has these
   const sorted = buildGraph(resolved as unknown as ResourceDef[]);
 
+  // Sort the live Resource instances to match the topological order
+  const idOrder = new Map(sorted.map((r, i) => [r.id, i]));
+  const sortedLeaves = [...leaves].sort(
+    (a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0),
+  );
+
   // Map sorted back to ResolvedResource format
-  const resources: ResolvedResource[] = sorted.map((r) => {
+  const resolvedResources: ResolvedResource[] = sorted.map((r) => {
     const { id, type, dependsOn, contributedBy, ...rest } = r;
     const action = { ...rest };
     delete (action as Record<string, unknown>).outputs;
@@ -257,14 +270,18 @@ function synthFromMachine(machine: Machine, platform: Platform, params: Params):
   });
 
   return {
-    platform,
-    resources,
-    metadata: {
-      generatedAt: new Date().toISOString(),
-      repoPath: "",
-      profileChain: [],
-      params,
+    state: {
+      platform,
+      resources: resolvedResources,
+      metadata: {
+        generatedAt: new Date().toISOString(),
+        repoPath: "",
+        profileChain: [],
+        params,
+      },
     },
+    resources: sortedLeaves,
+    platform,
   };
 }
 
@@ -273,7 +290,7 @@ function synthFromDachaConfig(
   config: DachaConfig,
   platform: Platform,
   params: Params,
-): ResolvedState {
+): SynthResult {
   // Resolve the profile chain
   const resolved = resolveProfile(config.target);
   const profileChain = collectProfileChain(config.target);
@@ -296,14 +313,18 @@ function synthFromDachaConfig(
   const resources = sorted.map(toResolvedResource);
 
   return {
-    platform,
-    resources,
-    metadata: {
-      generatedAt: new Date().toISOString(),
-      repoPath: config.repoPath,
-      profileChain,
-      params,
+    state: {
+      platform,
+      resources,
+      metadata: {
+        generatedAt: new Date().toISOString(),
+        repoPath: config.repoPath,
+        profileChain,
+        params,
+      },
     },
+    resources: [], // Legacy path has no live Resource instances
+    platform,
   };
 }
 

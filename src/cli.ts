@@ -41,8 +41,8 @@ root
   .action(async ({ config }) => {
     const configPath = config ?? await resolveConfigPath();
     const { synth } = await import("./synth.ts");
-    const state = await synth(configPath);
-    console.log(JSON.stringify(state, null, 2));
+    const result = await synth(configPath);
+    console.log(JSON.stringify(result.state, null, 2));
   });
 
 // --- apply ---
@@ -57,8 +57,8 @@ root
     const configPath = config ?? await resolveConfigPath();
     const { synth } = await import("./synth.ts");
     const { apply } = await import("./apply.ts");
-    const state = await synth(configPath);
-    await apply(state, { dryRun, yes });
+    const result = await synth(configPath);
+    await apply(result.resources, result.platform, { dryRun, yes });
   });
 
 // --- sync ---
@@ -117,8 +117,8 @@ root
       const configPath = await resolveConfigPath();
       const { synth } = await import("./synth.ts");
       const { apply } = await import("./apply.ts");
-      const state = await synth(configPath);
-      await apply(state);
+      const result = await synth(configPath);
+      await apply(result.resources, result.platform);
     } else {
       info("already up to date");
     }
