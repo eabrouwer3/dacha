@@ -7,6 +7,8 @@ export interface ExecOptions {
   env?: Record<string, string>;
   /** Timeout in milliseconds. Process is killed if it exceeds this. */
   timeout?: number;
+  /** Pass stdin through to the child process (needed for interactive installers). */
+  stdin?: "inherit" | "null";
 }
 
 export interface ExecResult {
@@ -35,6 +37,7 @@ export async function exec(
     args: rest,
     cwd: opts.cwd,
     env: opts.env,
+    stdin: opts.stdin ?? "null",
     stdout: "piped",
     stderr: "piped",
   });

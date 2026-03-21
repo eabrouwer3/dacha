@@ -106,6 +106,7 @@ export async function ensureBrew(): Promise<void> {
     info("Homebrew not found — installing via official script…");
     const install = await exec(
       '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"',
+      { stdin: "inherit" },
     );
     if (install.code !== 0) {
       throw new Error(
