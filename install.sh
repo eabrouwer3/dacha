@@ -54,7 +54,12 @@ ensure_deno() {
   fi
 
   info "Installing Deno..."
-  curl -fsSL https://deno.land/install.sh | sh
+  # Download installer to a temp file to avoid nested pipe-to-shell issues
+  # (when this script itself is piped via curl | sh, stdin is consumed)
+  DENO_INSTALLER="$(mktemp)"
+  curl -fsSL -o "$DENO_INSTALLER" https://deno.land/install.sh
+  sh "$DENO_INSTALLER"
+  rm -f "$DENO_INSTALLER"
 
   # Add to PATH for this session
   export DENO_INSTALL="$HOME/.deno"
@@ -70,10 +75,13 @@ ensure_deno() {
 # ── Resolve latest version tag ───────────────────────────
 
 resolve_version() {
+  TAG=""
   if command -v curl >/dev/null 2>&1; then
-    TAG="$(curl -fsSL -o /dev/null -w '%{redirect_url}' "https://github.com/${GITHUB_OWNER}/${REPO}/releases/latest" | grep -o '[^/]*$')"
+    REDIRECT_URL="$(curl -fsSL -o /dev/null -w '%{redirect_url}' "https://github.com/${GITHUB_OWNER}/${REPO}/releases/latest" 2>/dev/null || true)"
+    TAG="$(printf '%s' "$REDIRECT_URL" | grep -o '[^/]*$' 2>/dev/null || true)"
   elif command -v wget >/dev/null 2>&1; then
-    TAG="$(wget --spider --max-redirect=0 "https://github.com/${GITHUB_OWNER}/${REPO}/releases/latest" 2>&1 | grep -o 'Location:.*' | grep -o '[^/]*$')"
+    REDIRECT_URL="$(wget --spider --max-redirect=0 "https://github.com/${GITHUB_OWNER}/${REPO}/releases/latest" 2>&1 | grep -o 'Location:.*' || true)"
+    TAG="$(printf '%s' "$REDIRECT_URL" | grep -o '[^/]*$' 2>/dev/null || true)"
   fi
 
   if [ -z "$TAG" ]; then
