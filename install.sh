@@ -77,7 +77,7 @@ ensure_deno() {
 resolve_version() {
   TAG=""
   if command -v curl >/dev/null 2>&1; then
-    REDIRECT_URL="$(curl -fsSL -o /dev/null -w '%{redirect_url}' "https://github.com/${GITHUB_OWNER}/${REPO}/releases/latest" 2>/dev/null || true)"
+    REDIRECT_URL="$(curl -fsSo /dev/null -w '%{redirect_url}' "https://github.com/${GITHUB_OWNER}/${REPO}/releases/latest" 2>/dev/null || true)"
     TAG="$(printf '%s' "$REDIRECT_URL" | grep -o '[^/]*$' 2>/dev/null || true)"
   elif command -v wget >/dev/null 2>&1; then
     REDIRECT_URL="$(wget --spider --max-redirect=0 "https://github.com/${GITHUB_OWNER}/${REPO}/releases/latest" 2>&1 | grep -o 'Location:.*' || true)"
